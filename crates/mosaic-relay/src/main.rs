@@ -20,6 +20,8 @@ struct Cli {
     schema_only: bool,
     #[arg(long)]
     diagnostic_only: bool,
+    #[arg(long, conflicts_with_all = ["diagnostic_only", "check_config"])]
+    tunnel: bool,
     #[arg(long)]
     report: Option<PathBuf>,
 }
@@ -52,6 +54,7 @@ async fn main() -> ExitCode {
     if args.diagnostic_only {
         report.check_level = 2;
     }
+    let mut tunnel = None;
     let mut endpoint = None;
     let mut settings = None;
     match RelayConfig::load(&args.config) {
@@ -71,12 +74,18 @@ async fn main() -> ExitCode {
                             Status::Pass,
                             "certificate/key pairing and owner-only token validated",
                         );
-                        if args.diagnostic_only {
+                        if args.diagnostic_only || (args.tunnel && cfg!(target_os = "linux")) {
                             match session::Settings::load(&c).and_then(|s| quic::relay_endpoint(&c).map(|e| (e, s))) {
                                 Ok((e, s)) => {
+                                    if args.tunnel {
+                                        tunnel = Some(c.tunnel);
+                                        report.check_level = 3;
+                                        report.scope = "tunnel-service".into();
+                                        report.add("relay.tunnel_listen", Status::Pass, "Authenticated tunnel service ready; one owner; TUN opens only after Ready; forwarding and NAT are not configured");
+                                    }
                                     settings = Some(s);
                                     endpoint = Some(e);
-                                    report.add("relay.diagnostic_listen", Status::Pass, "Authenticated diagnostic service ready; tunnel and fetch unavailable; stop with SIGINT/SIGTERM");
+                                    if args.diagnostic_only { report.add("relay.diagnostic_listen", Status::Pass, "Authenticated diagnostic service ready; tunnel and fetch unavailable; stop with SIGINT/SIGTERM"); }
                                 }
                                 Err(_) => report.add("relay.diagnostic_listen", Status::Fail, "cannot initialize authenticated QUIC endpoint or bind configured UDP socket"),
                             }
@@ -84,11 +93,14 @@ async fn main() -> ExitCode {
                     }
                 }
             }
-            if !args.check_config && !args.diagnostic_only {
+            if !args.check_config
+                && !args.diagnostic_only
+                && (!args.tunnel || !cfg!(target_os = "linux"))
+            {
                 report.add(
                     "relay.serve",
                     Status::Blocked,
-                    "choose --diagnostic-only for authenticated diagnostics; tunnel serving is unavailable",
+                    "choose --diagnostic-only for diagnostics or --tunnel on a dedicated Linux relay",
                 );
             }
         }
@@ -98,7 +110,7 @@ async fn main() -> ExitCode {
         return ExitCode::from(1);
     }
     if let (Some(endpoint), Some(settings)) = (endpoint, settings) {
-        quic::serve(endpoint, settings, shutdown()).await;
+        quic::serve_with_tunnel(endpoint, settings, tunnel, shutdown()).await;
     }
     ExitCode::from(report.exit_code())
 }

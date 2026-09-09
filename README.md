@@ -1,8 +1,8 @@
 # Mosaic prototype
 
-Native setup, authenticated QUIC diagnostics and bounded packet framing are implemented. The client verifies the relay certificate before sending its token and completes SessionInit, SessionReady and ClientReady before stream or datagram echoes are accepted.
+Native setup, authenticated QUIC diagnostics, bounded packet framing and Linux isolated TUN support are implemented. The client verifies the relay certificate before sending its token and completes SessionInit, SessionReady and ClientReady before stream or datagram echoes are accepted.
 
-Isolated TUN is next. Native HTTPS through the relay, namespace routing and reconnect remain planned features. `preflight` HTTPS uses ordinary host egress. `fetch` and `isolated-up` remain unavailable. Local test results do not certify live deployment or VPN preservation.
+Live Linux TUN traffic, packet rejection and cleanup have been verified on both supplied servers. The complete plan remains blocked by the native Mac QUIC path and incomplete uninterrupted automation; see [the server test record](docs/testing/README.md). Native HTTPS through the relay, Internet forwarding, namespace DNS/default routing and reconnect remain planned features. `preflight` HTTPS uses ordinary host egress. `fetch` remains unavailable. Local test results do not certify live deployment or VPN preservation.
 
 ## Authenticated diagnostics
 
@@ -12,7 +12,7 @@ On the inventoried relay, with a binary built for its OS/CPU and its existing pr
 ./mosaic-relay -c relay.json --diagnostic-only
 ```
 
-The unauthenticated `--echo-only` service has been removed. The diagnostic service validates its config and credentials, opens only the configured UDP listener, emits a redacted readiness report and serves until SIGINT/SIGTERM. Binding UDP 443 requires appropriate existing privileges. It cannot open TUN or destination TCP connections. Running without `--diagnostic-only` or `--check-config` returns BLOCKED.
+The unauthenticated `--echo-only` service has been removed. The diagnostic service validates its config and credentials, opens only the configured UDP listener, emits a redacted readiness report and serves until SIGINT/SIGTERM. Binding UDP 443 requires appropriate existing privileges. It cannot open TUN or destination TCP connections. Running without `--diagnostic-only`, `--tunnel` or `--check-config` returns BLOCKED.
 
 On the native client:
 
@@ -24,7 +24,7 @@ On the native client:
 
 All cases authenticate on a fresh connection. The TLS handshake and session exchange each have a five-second deadline. Certificate trust, SAN and prototype ALPN `mosaic-poc/2` are verified, with 0-RTT and TLS resumption disabled. The relay decodes exactly 32 token bytes and compares them with `subtle::ConstantTimeEq`. Tokens appear only inside encrypted application data and never in reports.
 
-Control messages use a four-byte big-endian length and typed JSON bounded by the configured limit, at most 4096 bytes. Unknown fields, invalid lengths, unsupported versions/modes, early data and mismatched readiness values close the connection. A TLS exporter supplies a connection-bound identifier. Both send directions must support at least 1112 bytes before Ready. Tunnel mode is rejected until isolated TUN support exists. See [the session protocol](docs/session/README.md).
+Control messages use a four-byte big-endian length and typed JSON bounded by the configured limit, at most 4096 bytes. Unknown fields, invalid lengths, unsupported versions/modes, early data and mismatched readiness values close the connection. A TLS exporter supplies a connection-bound identifier. Both send directions must support at least 1112 bytes before Ready. Diagnostic-only relays reject tunnel mode; the Linux `--tunnel` service accepts one authenticated tunnel owner alongside diagnostic connections. See [the session protocol](docs/session/README.md).
 
 The stream case performs 100 byte-exact echoes at each size: 0, 1, 64, 1024 and 65536 bytes, including three concurrent streams. Each diagnostic stream carries one raw payload terminated by FIN, separate from the control stream. Stream deadlines are 15 seconds, with a four-minute connection workload limit.
 
@@ -35,6 +35,47 @@ Application packet queues hold at most 256 packets; QUIC send and receive datagr
 `test` reports `scope: authenticated-diagnostics`. PASS covers only the requested case. Host egress uses an outbound-only ephemeral UDP socket and ordinary OS routing; the VPN/direct outer path and preservation gate V require independent live evidence. Failed TLS, authorization, size negotiation or blocked UDP returns FAIL without changing host network policy.
 
 The local rejection tests capture an actual QUIC Initial datagram and use rustls Initial keys to recover the TLS ClientHello. They observe server name `relay.example.net` and ALPN `mosaic-poc/2`, with no application token. Their JSON evidence appears in the test log. Ordinary diagnostic runs report this visibility boundary without claiming to capture a live handshake. QUIC Initial protection does not conceal these fields; renaming an encrypted application message adds no concealment. See [RFC 9001](https://www.rfc-editor.org/rfc/rfc9001.html#section-7) and [Quinn's datagram limit API](https://docs.rs/quinn/0.11.11/quinn/struct.Connection.html#method.max_datagram_size).
+
+## Isolated Linux TUN
+
+The Linux launcher and relay exchange IPv4 packets through exclusive nonpersistent TUN devices. The client opens an ephemeral UDP socket under the baseline policy’s non-root `test_uid` in the original namespace. A separate worker inherits that descriptor, enters a new network namespace before starting Tokio, proves its socket namespace differs from the worker’s, and authenticates through it. TUN opens only after Ready. The worker then drops supplementary groups and root privileges. The original launcher remains outside isolation.
+
+After fresh relay and shared-node inventory, build binaries for their Linux architecture. On the dedicated relay:
+
+```sh
+./mosaic-relay -c configs/relay.json --tunnel
+```
+
+After recording the mandatory five-minute VPN baseline on the extra node:
+
+```sh
+sudo ./mosaic-client isolated-up -c configs/client-node.json \
+  --policy configs/node-baseline.json --baseline .mosaic-baseline \
+  --guard tools/network/isolation.py --report results/tunnel.json
+```
+
+The launcher requires Python 3, the existing inventory tools, Linux namespace-cookie and pidfd support, root for setup, and a configured non-root account. The policy must match the relay IP, namespace and tunnel subnet. The guard verifies the baseline before setup, then checks host configuration, exact socket/namespace ownership and VPN health every five seconds. A failed probe, changed egress, drift, missed sampling deadline, excessive rolling latency or worker RSS above 256 MiB stops the run. Each packet pump has bounded queues and a capped schedule. These checks do not constitute a CPU reservation.
+
+The worker’s namespace contains only loopback and its TUN, with the configured connected /30 and MTU 1100. TUN IPv6 is disabled. No veth, host route, firewall, host forwarding, resolver change or Internet route is installed. The relay likewise adds only its TUN and connected subnet; forwarding and NAT are separate future work.
+
+With the default example addresses, inspect and test from another administration session:
+
+```sh
+sudo ip -n mosaic-test addr show
+sudo ip -n mosaic-test route show table all
+sudo ip netns exec mosaic-test ping -n -c 20 -W 2 10.77.0.1
+```
+
+On the dedicated relay, run `ping -n -I mosaic0 -c 20 -W 2 10.77.0.2`. Capture ICMP on both TUNs with bounded `tcpdump` runs. Both directions must return 20/20; the local packet tests do not replace these Linux assertions. See [the isolated TUN checks](docs/isolation/README.md).
+
+SIGINT/SIGTERM to the exact launcher stops its worker and guard, removes the owned namespace, and verifies host/VPN controls after teardown. The kernel kills the worker if its launcher dies. After SIGKILL or interrupted setup, use:
+
+```sh
+sudo ./mosaic-client isolated-down --namespace mosaic-test
+sudo python3 tools/network/baseline.py verify --policy configs/node-baseline.json
+```
+
+Cleanup verifies process start times, namespace and mount identities. It refuses an active launcher, changed resources or a namespace with unrecognized processes. Stop namespace test commands before teardown. Ownership records are private under `/run/mosaic-test`; cleanup never adopts an existing namespace or restores whole-host snapshots. A failed transport exits and removes the namespace; reconnect is not implemented.
 
 ## Native client
 
@@ -82,7 +123,7 @@ python3 scripts/check.py 2
 
 The runner checks formatting, Clippy, native builds, Rust config/credential, session rejection, captured handshake and real loopback QUIC tests, plus Python CLI/monitor tests. The QUIC tests cover the full echo matrix, real TLS trust/name/ALPN rejections, silent UDP timeout, rejected streams, and fresh relay restart. Native CLI tests independently launch and stop exact child relay processes, verify reports and check UDP-port release. Tests run twice with fresh processes. Each subprocess has a deadline; output and JSON reports live in owner-only `results/checks-*/` directories. Local tests generate disposable certificates in temporary directories and remove them afterwards.
 
-`--local-only` returns 0 only for successful local checks, with `scope: local-only` and `deployment_status: BLOCKED`. The default deployment command returns 2 while live gates are incomplete. The original plan’s `scripts/check.sh` command is now `python3 scripts/check.py`; `scripts/node-baseline.sh` is now `python3 tools/network/baseline.py`. The numeric check level selects setup (0), QUIC connectivity (1), authentication and framing (2), or planned features (3–9). Levels 3–9 run the existing checks and report each unimplemented feature as BLOCKED; missing tests are never treated as passes. The required live assertions are listed in `tests/manifest.json`. The current runner deliberately cannot certify live deployment from hand-authored evidence files.
+`--local-only` returns 0 only for successful local checks, with `scope: local-only` and `deployment_status: BLOCKED`. The default deployment command returns 2 while live gates are incomplete. The original plan’s `scripts/check.sh` command is now `python3 scripts/check.py`; `scripts/node-baseline.sh` is now `python3 tools/network/baseline.py`. The numeric check level selects setup (0), QUIC connectivity (1), authentication and framing (2), isolated TUN (3), or planned features (4–9). Levels 4–9 run the existing checks and report each unimplemented feature as BLOCKED; missing tests are never treated as passes. The required live assertions are listed in `tests/manifest.json`. The current runner deliberately cannot certify live deployment from hand-authored evidence files.
 
 Build/package for the current native target:
 
@@ -131,6 +172,6 @@ The generic baseline tool observes control health. The developer preservation dr
 
 ## Outstanding live gates
 
-Representative configured-account Xray probes now pass on both supplied hosts, including a 300-second baseline and five-second checks around two fresh local test runs. All 84 samples per stream passed; see [the health evidence](results/xray-preservation-1788972931883638000/report.json) and [reproduction guide](tools/xray/README.md). The current authenticated diagnostics still require matching Linux builds and fresh live tests. The earlier raw-echo build remains blocked by the failed native path, interrupted full echo/restart checks, and unverified privileged local firewall state. Both require fresh before/during/after preservation samples around actual deployment tests. These are deployment tasks, not inferred successes from unit tests. Do not begin shared-node traffic tests until V can be measured, and do not bypass its VPN to improve reachability.
+Representative configured-account Xray probes now pass on both supplied hosts, including a 300-second baseline and five-second checks around two fresh local test runs. All 84 samples per stream passed; see [the health evidence](results/xray-preservation-1788972931883638000/report.json) and [reproduction guide](tools/xray/README.md). Current Linux builds have passed both byte-echo repetitions and the isolated TUN checks described in [the server test record](docs/testing/README.md). The native path and privileged local firewall checks remain incomplete. Each new deployment test still requires fresh before/during/after preservation samples. These are deployment tasks, not inferred successes from unit tests. Do not begin shared-node traffic tests until V can be measured, and do not bypass its VPN to improve reachability.
 
 Secrets, private configs, raw baselines, generated binaries and run evidence are ignored by Git. Example configs are safe to track. Never commit a relay private key or a private ready-to-use config.

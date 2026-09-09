@@ -26,3 +26,10 @@ path = "tests/net/echo.rs"
 [[test]]
 name = "protocol_rejects"
 path = "tests/protocol/rejects.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[[test]]
+name = "net_isolation"
+path = "tests/net/isolation.rs"

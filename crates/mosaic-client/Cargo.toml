@@ -11,3 +11,8 @@ clap.workspace = true
 mosaic-core.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+serde.workspace = true
+serde_json.workspace = true

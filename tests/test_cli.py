@@ -42,6 +42,12 @@ class CliTests(unittest.TestCase):
             self.run_cli("mosaic-relay", "-c", relay, code=2)
             result = self.run_cli("mosaic-client", "preflight", "-c", config, code=2)
             self.assertEqual(json.loads(result.stdout)["status"], "BLOCKED")
+            node = d / "client-node.json"
+            node.write_text((ROOT / "configs/client-node.example.json").read_text())
+            import platform
+            expected = 2 if platform.system() != "Linux" else 1
+            blocked = self.run_cli("mosaic-client", "isolated-up", "-c", node, "--policy", d / "missing-policy.json", "--baseline", d / "missing-baseline", code=expected)
+            self.assertEqual(json.loads(blocked.stdout)["scope"], "isolated-tun")
             token = (d / "secrets/client.token").read_text().strip()
             self.assertNotIn(token, result.stdout + result.stderr)
             value = json.loads(config.read_text())

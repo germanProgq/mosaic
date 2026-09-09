@@ -68,8 +68,25 @@
     },
     {
       "check_level": 3,
-      "implementation": "pending",
-      "name": "Isolated TUN"
+      "implementation": "local isolated TUN code and packet tests",
+      "name": "Isolated TUN",
+      "local": [
+        "tunnel.ipv4_lengths_checksum_options_fragments",
+        "tunnel.source_and_destination_validation",
+        "tunnel.bidirectional_pumps_and_cancellation",
+        "tunnel.exclusive_owner_and_release",
+        "tunnel.custom_socket_real_quic",
+        "isolation.guard_exact_resource_ownership"
+      ],
+      "live_required": [
+        "isolation.host_socket_cookie_and_uid_after_namespace_entry",
+        "isolation.only_loopback_and_tun_no_host_changes",
+        "tunnel.icmp_20_of_20_each_direction_with_captures",
+        "tunnel.malformed_and_spoofed_packets_not_injected",
+        "isolation.signal_kill_and_partial_setup_cleanup",
+        "node.v_300s_before_5s_during_after",
+        "repeat.fresh_processes"
+      ]
     },
     {
       "check_level": 4,

@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--configs',default=str(ROOT/'configs/health'))
     parser.add_argument('--allow-verified-sshd-bans',action='store_true',help='explicitly authorized exception for SSH jail runtime membership only')
     parser.add_argument('--samples',type=int,default=84)
+    parser.add_argument('--control',choices=('ipify','cloudflare'),default='ipify')
     parser.add_argument('--owned-jobs-manifest')
     parser.add_argument('--workload',nargs=argparse.REMAINDER,required=True,help='trusted command to run after the healthy baseline')
     args=parser.parse_args()
@@ -43,7 +44,7 @@ def main():
     if len(records)!=2:raise SystemExit('Exactly two explicitly configured servers required')
     digests={staged[host]['sha256'] for host in records}
     if len(digests)!=1:raise SystemExit('Staged probe hashes must match on both hosts')
-    report={'schema_version':1,'scope':'representative-configured-xray-clients','status':'BLOCKED','baseline_seconds':300,'probe_interval_seconds':5,'configured_samples_per_stream':args.samples,'workload':args.workload,'assertions':[],'client_identity_kind':'existing configured account, outbound-only probe from the other supplied Linux host as nobody; not an existing user device','allow_verified_sshd_bans':args.allow_verified_sshd_bans,'expected_runtime_updates':[],'probe_sha256':digests.pop()}
+    report={'schema_version':1,'scope':'representative-configured-xray-clients','status':'BLOCKED','baseline_seconds':300,'https_control':args.control,'host_latency_measurement':'curl time_total; inventory duration reported separately','probe_interval_seconds':5,'configured_samples_per_stream':args.samples,'workload':args.workload,'assertions':[],'client_identity_kind':'existing configured account, outbound-only probe from the other supplied Linux host as nobody; not an existing user device','allow_verified_sshd_bans':args.allow_verified_sshd_bans,'expected_runtime_updates':[],'probe_sha256':digests.pop()}
     events=queue.Queue();histories={};initial_inventories=set();test_proc=None
     workers={};poll_stop=threading.Event();poll_threads=[]
     streams_by_source={host:{} for host in records}
@@ -74,7 +75,7 @@ def main():
     try:
         for host,password in records.items():
             cfg=json.loads((Path(args.configs)/(host+'.json')).read_text())
-            policy={'vpn_role':'server','test_uid':65534,'relay_ip':next(h for h in records if h!=host),'namespace':'mosaic-test','tunnel_subnet':'10.77.0.0/30','firewall':'both','vpn_services':['xray.service'],'vpn_containers':[],'vpn_interfaces':['eth0'],'vpn_config_files':[cfg['xray_config_path']],'expected_egress':cfg['expected_egress']}
+            policy={'vpn_role':'server','test_uid':65534,'relay_ip':next(h for h in records if h!=host),'namespace':'mosaic-test','tunnel_subnet':'10.77.0.0/30','firewall':'both','vpn_services':['xray.service'],'vpn_containers':[],'vpn_interfaces':['eth0'],'vpn_config_files':[cfg['xray_config_path']],'expected_egress':cfg['expected_egress'],'https_control':args.control}
             if host in owned_jobs:policy['owned_jobs']=owned_jobs[host]
             remote="b={'__name__':'baseline_library'}\nexec("+repr(baseline_source)+",b)\n"+monitor_source+"\nraise SystemExit(monitor(b,"+repr(policy)+","+str(args.samples)+","+repr(args.allow_verified_sshd_bans)+"))\n"
             streams_by_source[host][host+'-host']=remote
@@ -134,8 +135,8 @@ def main():
         if not failed and tests_done and len(initial_inventories)==2 and all(len(h)==args.samples for h in histories.values()):
             report['status']='PASS'
         else:report['status']='FAIL'
-    except (OSError,ValueError,KeyError,RuntimeError,subprocess.TimeoutExpired,KeyboardInterrupt):
-        report['status']='FAIL';report['assertions'].append({'id':'driver.interrupted_or_unavailable','status':'FAIL'})
+    except (OSError,ValueError,KeyError,RuntimeError,subprocess.TimeoutExpired,KeyboardInterrupt) as error:
+        report['status']='FAIL';report['assertions'].append({'id':'driver.interrupted_or_unavailable','status':'FAIL','error_type':type(error).__name__})
     finally:
         poll_stop.set()
         for thread in poll_threads:thread.join(timeout=16)

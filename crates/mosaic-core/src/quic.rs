@@ -98,6 +98,25 @@ pub async fn connect(c: &ClientConfig) -> Result<ClientConnection> {
     // Ordinary OS routing applies; no interface binding, bypass mark or proxy listener.
     let mut endpoint = Endpoint::client(bind).context("cannot create outbound UDP socket")?;
     endpoint.set_default_client_config(config);
+    connect_endpoint(c, endpoint).await
+}
+
+pub async fn connect_socket(
+    c: &ClientConfig,
+    socket: std::net::UdpSocket,
+) -> Result<ClientConnection> {
+    socket.set_nonblocking(true)?;
+    let mut endpoint = Endpoint::new(
+        quinn::EndpointConfig::default(),
+        None,
+        socket,
+        Arc::new(quinn::TokioRuntime),
+    )?;
+    endpoint.set_default_client_config(client_config(c)?);
+    connect_endpoint(c, endpoint).await
+}
+
+async fn connect_endpoint(c: &ClientConfig, endpoint: Endpoint) -> Result<ClientConnection> {
     let attempt = endpoint.connect(c.server.address, &c.server.name)?;
     let connection = match timeout(CONNECT_DEADLINE, attempt).await {
         Ok(Ok(c)) => c,
@@ -301,8 +320,59 @@ async fn serve_connection(
     connection: Connection,
     pacer: Option<Arc<Pacer>>,
     settings: Arc<session::Settings>,
+    tunnel: Option<Arc<crate::config::Tunnel>>,
 ) {
-    if session::accept(&connection, &settings).await.is_err() {
+    let Ok(ready) = session::accept(&connection, &settings).await else {
+        return;
+    };
+    if ready.mode == "tunnel" {
+        #[cfg(target_os = "linux")]
+        if let Some(config) = tunnel {
+            match crate::tun::Tun::create(&config) {
+                Ok(tun) => {
+                    let counters = Arc::new(crate::pump::Counters::default());
+                    let mut report = crate::report::Report::new("relay-tunnel-ready");
+                    report.check_level = 3;
+                    report.add(
+                        "relay.tun",
+                        crate::report::Status::Pass,
+                        "exclusive TUN opened for the authenticated owner with MTU 1100",
+                    );
+                    if report.emit(None).is_ok() {
+                        let _ = crate::pump::run(
+                            &connection,
+                            &tun,
+                            crate::pump::Options {
+                                outbound: crate::packet::Address::Destination(config.peer),
+                                inbound: crate::packet::Address::Source(config.peer),
+                                queue_packets: settings.queue_packets,
+                                max_mbps: 1.0,
+                            },
+                            counters.clone(),
+                        )
+                        .await;
+                    }
+                    use std::sync::atomic::Ordering;
+                    eprintln!(
+                        "relay tunnel sent={} received={} rejected={} dropped={}",
+                        counters.sent.load(Ordering::Relaxed),
+                        counters.received.load(Ordering::Relaxed),
+                        counters.rejected.load(Ordering::Relaxed),
+                        counters.dropped.load(Ordering::Relaxed)
+                    );
+                }
+                Err(_) => {
+                    let mut report = crate::report::Report::new("relay-tunnel");
+                    report.check_level = 3;
+                    report.add("relay.tun", crate::report::Status::Fail, "exclusive TUN setup failed; inspect Linux privileges, subnet and interface inventory");
+                    let _ = report.emit(None);
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = tunnel;
+        connection.close(0u32.into(), b"tunnel ended");
+        drop(ready);
         return;
     }
     let mut packets = JoinSet::new();
@@ -387,6 +457,19 @@ pub async fn serve(
     settings: session::Settings,
     shutdown: impl Future<Output = ()>,
 ) {
+    serve_with_tunnel(endpoint, settings, None, shutdown).await;
+}
+
+pub async fn serve_with_tunnel(
+    endpoint: Endpoint,
+    mut settings: session::Settings,
+    tunnel: Option<crate::config::Tunnel>,
+    shutdown: impl Future<Output = ()>,
+) {
+    if tunnel.is_some() {
+        settings.enable_tunnel();
+    }
+    let tunnel = tunnel.map(Arc::new);
     let settings = Arc::new(settings);
     tokio::pin!(shutdown);
     let mut connections = JoinSet::new();
@@ -404,9 +487,10 @@ pub async fn serve(
                 } else {
                     let pacer = (!incoming.remote_address().ip().is_loopback()).then(|| pacer.clone());
                     let settings = settings.clone();
+                    let tunnel = tunnel.clone();
                     connections.spawn(async move {
                         if let Ok(Ok(connection)) = timeout(CONNECT_DEADLINE, incoming).await {
-                            serve_connection(connection, pacer, settings).await;
+                            serve_connection(connection, pacer, settings, tunnel).await;
                         }
                     });
                 }

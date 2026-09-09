@@ -1,4 +1,5 @@
 mod diagnostic;
+mod netns_launcher;
 mod preflight;
 use clap::{Parser, Subcommand};
 use mosaic_core::{
@@ -15,6 +16,37 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    #[command(about = "Run an isolated Linux TUN with an inherited host UDP socket and VPN guard.")]
+    IsolatedUp {
+        #[arg(short, long)]
+        config: PathBuf,
+        #[arg(long)]
+        policy: PathBuf,
+        #[arg(long)]
+        baseline: PathBuf,
+        #[arg(long, default_value = "tools/network/isolation.py")]
+        guard: PathBuf,
+        #[arg(long)]
+        report: Option<PathBuf>,
+    },
+    #[command(about = "Remove an inactive launcher's recorded namespace and worker.")]
+    IsolatedDown {
+        #[arg(long)]
+        namespace: String,
+        #[arg(long)]
+        report: Option<PathBuf>,
+    },
+    #[command(hide = true)]
+    IsolatedWorker {
+        #[arg(short, long)]
+        config: PathBuf,
+        #[arg(long)]
+        fd: i32,
+        #[arg(long)]
+        cookie: u64,
+        #[arg(long)]
+        uid: u32,
+    },
     /// Validate the strict config schema and local credential files without network activity.
     CheckConfig {
         #[arg(short, long)]
@@ -48,10 +80,51 @@ enum Command {
         report: Option<PathBuf>,
     },
 }
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let cli = Cli::parse();
-    let (config, schema_only, output, preflight, diagnostic) = match cli.command {
+    match cli.command {
+        Command::IsolatedUp {
+            config,
+            policy,
+            baseline,
+            guard,
+            report,
+        } => netns_launcher::launch(netns_launcher::Options {
+            config: &config,
+            policy: &policy,
+            baseline: &baseline,
+            guard: &guard,
+            output: report.as_deref(),
+        }),
+        Command::IsolatedDown { namespace, report } => {
+            netns_launcher::cleanup(&namespace, report.as_deref())
+        }
+        Command::IsolatedWorker {
+            config,
+            fd,
+            cookie,
+            uid,
+        } => match netns_launcher::worker(&config, fd, cookie, uid) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => {
+                eprintln!(
+                    "FAIL isolation.worker: namespace, inherited socket, authentication or packet pump failed"
+                );
+                ExitCode::from(1)
+            }
+        },
+        command => match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime.block_on(run(command)),
+            Err(_) => ExitCode::from(1),
+        },
+    }
+}
+
+async fn run(command: Command) -> ExitCode {
+    let (config, schema_only, output, preflight, diagnostic) = match command {
         Command::CheckConfig {
             config,
             schema_only,
@@ -75,6 +148,9 @@ async fn main() -> ExitCode {
                 mosaic_core::quic::DatagramOptions { count, size, rate },
             )),
         ),
+        Command::IsolatedUp { .. }
+        | Command::IsolatedDown { .. }
+        | Command::IsolatedWorker { .. } => return ExitCode::from(2),
     };
     let mut report = Report::new(if schema_only {
         "schema-only"

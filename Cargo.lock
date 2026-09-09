@@ -666,8 +666,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "mosaic-core",
  "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -676,6 +679,7 @@ name = "mosaic-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "quinn",
  "rcgen",
  "rustls",

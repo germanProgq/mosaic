@@ -13,15 +13,22 @@ pub const SIZE_ERROR: u32 = 2;
 pub struct Ready {
     pub session_id: String,
     pub send_limit: usize,
+    pub mode: String,
+    pub lease: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 pub struct Settings {
     token: [u8; 32],
     pub control_limit: usize,
     pub queue_packets: usize,
+    tunnel: Option<std::sync::Arc<tokio::sync::Semaphore>>,
 }
 
 impl Settings {
+    pub fn enable_tunnel(&mut self) {
+        self.tunnel = Some(std::sync::Arc::new(tokio::sync::Semaphore::new(1)));
+    }
+
     pub fn load(c: &RelayConfig) -> Result<Self> {
         ensure!(
             (1..=frame::MAX_QUEUE_PACKETS).contains(&c.limits.queue_packets)
@@ -30,6 +37,7 @@ impl Settings {
         );
         Ok(Self {
             token: read_token(&c.auth.token_file)?,
+            tunnel: None,
             control_limit: c.limits.max_control_bytes,
             queue_packets: c.limits.queue_packets.min(frame::MAX_QUEUE_PACKETS),
         })
@@ -64,6 +72,22 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub async fn authorize(connection: &Connection, c: &ClientConfig) -> Result<Ready> {
+    authorize_mode(connection, c, "diagnostic").await
+}
+
+pub async fn authorize_tunnel(connection: &Connection, c: &ClientConfig) -> Result<Ready> {
+    ensure!(
+        c.mode == "isolated_tun",
+        "isolated TUN configuration required"
+    );
+    authorize_mode(connection, c, "tunnel").await
+}
+
+async fn authorize_mode(
+    connection: &Connection,
+    c: &ClientConfig,
+    expected_mode: &str,
+) -> Result<Ready> {
     let work = async {
         let local_limit = send_limit(connection)?;
         let token = read_token(&c.auth.token_file)?;
@@ -72,7 +96,7 @@ pub async fn authorize(connection: &Connection, c: &ClientConfig) -> Result<Read
             &mut send,
             &Control::SessionInit {
                 version: frame::VERSION,
-                mode: "diagnostic".into(),
+                mode: expected_mode.into(),
                 token: hex(&token),
                 mtu: frame::MTU,
                 send_limit: local_limit,
@@ -93,7 +117,7 @@ pub async fn authorize(connection: &Connection, c: &ClientConfig) -> Result<Read
         ensure!(agreed >= frame::MTU + frame::PACKET_HEADER_BYTES, SizeError);
         ensure!(
             version == frame::VERSION
-                && mode == "diagnostic"
+                && mode == expected_mode
                 && mtu == frame::MTU
                 && agreed <= local_limit
                 && session_id == identifier(connection)?,
@@ -116,6 +140,8 @@ pub async fn authorize(connection: &Connection, c: &ClientConfig) -> Result<Read
         Ok(Ready {
             session_id,
             send_limit: agreed,
+            mode: expected_mode.into(),
+            lease: None,
         })
     };
     let result = timeout(CONNECT_DEADLINE, async {
@@ -163,13 +189,28 @@ pub async fn accept(connection: &Connection, settings: &Settings) -> Result<Read
                 "session rejected"
             );
             ensure!(
-                version == frame::VERSION && mode == "diagnostic" && mtu == frame::MTU,
+                version == frame::VERSION
+                    && (mode == "diagnostic" || mode == "tunnel")
+                    && mtu == frame::MTU,
                 "unsupported session"
             );
             ensure!(
                 peer_limit >= frame::MTU + frame::PACKET_HEADER_BYTES,
                 SizeError
             );
+            let lease = if mode == "tunnel" {
+                Some(
+                    settings
+                        .tunnel
+                        .as_ref()
+                        .context("tunnel mode unavailable")?
+                        .clone()
+                        .try_acquire_owned()
+                        .context("tunnel already owned")?,
+                )
+            } else {
+                None
+            };
             let agreed = send_limit(connection)?.min(peer_limit);
             let id = identifier(connection)?;
             frame::write_control(
@@ -203,6 +244,8 @@ pub async fn accept(connection: &Connection, settings: &Settings) -> Result<Read
             Ok(Ready {
                 session_id: id,
                 send_limit: agreed,
+                mode,
+                lease,
             })
         };
         tokio::select! {

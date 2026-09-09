@@ -2,7 +2,7 @@ use mosaic_core::{
     config::{ClientConfig, RelayConfig},
     quic,
 };
-use std::{fs, path::Path, time::Duration};
+use std::{fs, time::Duration};
 use tempfile::TempDir;
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
@@ -35,13 +35,17 @@ impl Fixture {
                 .unwrap();
             }
         }
-        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../configs");
-        for name in ["client", "relay"] {
-            fs::copy(
-                examples.join(format!("{name}.example.json")),
-                root.join(format!("{name}.json")),
-            )
-            .unwrap();
+        for (name, contents) in [
+            (
+                "client",
+                include_str!("../../../../configs/client.example.json"),
+            ),
+            (
+                "relay",
+                include_str!("../../../../configs/relay.example.json"),
+            ),
+        ] {
+            fs::write(root.join(format!("{name}.json")), contents).unwrap();
         }
         let client = ClientConfig::load(&root.join("client.json")).unwrap();
         let mut relay = RelayConfig::load(&root.join("relay.json")).unwrap();

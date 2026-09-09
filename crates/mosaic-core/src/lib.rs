@@ -1,5 +1,11 @@
 pub mod config;
 pub mod frame;
+#[cfg(target_os = "linux")]
+pub mod linux;
+pub mod packet;
+pub mod pump;
 pub mod quic;
 pub mod report;
 pub mod session;
+#[cfg(target_os = "linux")]
+pub mod tun;
