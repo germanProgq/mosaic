@@ -1,0 +1,10 @@
+{
+  "version": 2, "type": "mosaic", "listen": "0.0.0.0:443",
+  "transport": {"type": "quic", "alpn": "mosaic-poc/2", "idle_timeout_s": 15, "keepalive_s": 5},
+  "tls": {"cert": "secrets/relay.crt", "key": "secrets/relay.key"},
+  "auth": {"token_file": "secrets/client.token"},
+  "limits": {"max_control_bytes": 4096, "queue_packets": 256},
+  "tunnel": {"name": "mosaic0", "address": "10.77.0.1/30", "peer": "10.77.0.2", "mtu": 1100, "ipv6": "block"},
+  "allowed_client": "10.77.0.2", "tunnel_owners": 1,
+  "fetch": {"allow": [{"host": "example.com", "port": 443}, {"host": "api.ipify.org", "port": 443}], "max_requests": 10, "max_bytes": 33554432, "timeout_s": 300}
+}

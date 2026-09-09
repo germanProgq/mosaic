@@ -1,0 +1,53 @@
+{
+  "vpn_role": "outbound",
+  "test_uid": 1000,
+  "relay_ip": "203.0.113.10",
+  "namespace": "mosaic-test",
+  "tunnel_subnet": "10.77.0.0/30",
+  "firewall": "nftables",
+  "vpn_services": [
+    "REPLACE_WITH_ACTUAL_VPN.service"
+  ],
+  "vpn_containers": [],
+  "vpn_interfaces": [
+    "REPLACE_WITH_ACTUAL_INTERFACE"
+  ],
+  "probes": [
+    {
+      "id": "ordinary_https",
+      "argv": [
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "4",
+        "https://example.com"
+      ],
+      "stable_output": false
+    },
+    {
+      "id": "host_egress",
+      "argv": [
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "4",
+        "https://api.ipify.org"
+      ],
+      "stable_output": true
+    },
+    {
+      "id": "vpn_only",
+      "argv": [
+        "REPLACE_WITH_BOUNDED_VPN_ONLY_PROBE"
+      ],
+      "stable_output": false
+    }
+  ],
+  "vpn_config_files": [
+    "/REPLACE_WITH_ACTUAL_VPN_CONFIG_FILE"
+  ]
+}

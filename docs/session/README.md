@@ -1,0 +1,27 @@
+# Session protocol
+
+The diagnostic protocol runs after verified QUIC TLS with ALPN `mosaic-poc/2`. TLS resumption and 0-RTT are disabled. The client opens bidirectional stream zero for control. Each control message is a u32 big-endian byte length followed by exactly that many bytes of typed JSON. Empty messages, lengths above the configured cap or 4096 bytes, duplicate or unknown fields, invalid JSON and truncated input fail the session. Lengths are checked before payload allocation. Control exchange has a five-second deadline.
+
+The client sends `SessionInit` with `type`, `version` (2), `mode` (`diagnostic`), `token` (64 hexadecimal characters encoding exactly 32 bytes), `mtu` (1100) and `send_limit` (its current Quinn maximum datagram size). The relay compares decoded tokens with the established constant-time routine from `subtle`. Tunnel mode is currently rejected.
+
+The relay sends `SessionReady` with `type`, `version`, `mode`, `mtu`, `send_limit` and `session_id`. The agreed limit is the minimum of both reported send limits; each must fit 1100 payload bytes plus the 12-byte packet header. Unsupported or insufficient datagram capacity closes the session with application code 2 and a fixed size error. Other authorization failures use code 1 and a fixed redacted reason.
+
+The session identifier is 32 bytes of TLS exporter output encoded as lowercase hex, using label `mosaic session identifier` and context `2`. Each peer independently derives the identifier from its established connection. It changes on a fresh connection and is never a substitute for the token. The client validates the identifier, version, diagnostic mode, MTU and agreed limit.
+
+The client sends `ClientReady` repeating all agreed values, then finishes its control direction. The relay verifies every value and the FIN, then finishes its response direction. The client waits for that FIN before returning Ready. Extra control bytes, an additional stream or datagrams observed before Ready reject the connection. No tunnel setup or IP packet injection exists in diagnostic mode.
+
+Subsequent bidirectional streams carry one reliable echo payload, bounded to 65536 bytes and terminated by FIN. The control size cap does not apply to these streams. The relay can process three simultaneously.
+
+Diagnostic datagrams use this big-endian layout:
+
+| Field | Bytes | Value |
+| --- | --- | --- |
+| Version | 1 | 2 |
+| Kind | 1 | 1 for diagnostic echo |
+| Payload length | 2 | 1 through 1100 |
+| Sequence | 8 | Unsigned diagnostic sequence |
+| Payload | Declared length | Exact diagnostic bytes |
+
+The receiver checks the whole size, version, diagnostic kind and declared length before echoing. Kind 0 is reserved for future IP packets and is rejected here. Sequences count unique replies and measure loss; they provide no replay protection or custom cryptography. QUIC datagrams can be lost, duplicated or reordered. Every response is checked against its sequence-specific expected payload; duplicate responses cannot satisfy the unique-reply threshold.
+
+The relay loads credentials at startup. Changing its token requires restarting that exact relay process. A valid session remains usable for its bounded workload; no reconnect or credential rotation protocol is implemented.

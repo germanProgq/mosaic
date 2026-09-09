@@ -1,0 +1,13 @@
+{
+  "version": 2, "type": "mosaic", "mode": "isolated_tun",
+  "server": {"address": "203.0.113.10:443", "name": "relay.example.net"},
+  "transport": {"type": "quic", "alpn": "mosaic-poc/2", "idle_timeout_s": 15, "keepalive_s": 5},
+  "tls": {"trust_cert": "secrets/relay.crt"},
+  "auth": {"token_file": "secrets/client.token"},
+  "network": {"outbound_only": true, "change_host_network": false},
+  "limits": {"max_control_bytes": 4096, "queue_packets": 256},
+  "isolation": {"namespace": "mosaic-test", "transport_socket": "created_in_host_namespace", "host_network_changes": "forbidden", "preserve_existing_vpn": true},
+  "tunnel": {"name": "mosaic0", "address": "10.77.0.2/30", "peer": "10.77.0.1", "mtu": 1100, "ipv6": "block"},
+  "dns": {"servers": ["1.1.1.1"]},
+  "test_limits": {"max_mbps": 1, "parallel_flows": 1}
+}

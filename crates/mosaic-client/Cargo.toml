@@ -1,0 +1,13 @@
+[package]
+name = "mosaic-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+mosaic-core.workspace = true
+tokio.workspace = true
+reqwest.workspace = true

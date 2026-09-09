@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "checks": [
+    {
+      "check_level": 0,
+      "implementation": "local foundation",
+      "local": [
+        "config.positive_negative",
+        "credentials.relative_paths_permissions",
+        "native.cli_reports",
+        "node.monitor_logic",
+        "repeat.fresh_processes"
+      ],
+      "live_required": [
+        "relay.ssh_https_dns",
+        "relay.udp443_firewall_tun_inventory",
+        "relay.certificate_san_and_provisioning",
+        "node.vpn_identified",
+        "node.no_namespace_subnet_port_collision",
+        "node.v_300s_before_5s_during_after",
+        "local.network_preservation"
+      ]
+    },
+    {
+      "check_level": 1,
+      "implementation": "local authenticated QUIC echo",
+      "name": "QUIC connectivity",
+      "local": [
+        "quic.500_echoes_all_sizes_three_streams",
+        "quic.trust_name_alpn_rejection_5s",
+        "quic.silent_udp_deadline",
+        "quic.oversized_reset_unfinished_streams",
+        "quic.relay_restart",
+        "quic.native_cli_and_shutdown"
+      ],
+      "live_required": [
+        "quic.native_to_relay_echo_twice",
+        "quic.extra_node_to_relay_echo_twice",
+        "quic.live_relay_restart",
+        "quic.extra_node_egress_path_label",
+        "node.v_300s_before_5s_during_after",
+        "local.network_preservation"
+      ]
+    },
+    {
+      "check_level": 2,
+      "implementation": "local session authorization and framing",
+      "name": "Session authorization and framing",
+      "local": [
+        "session.token_version_mode_rejections",
+        "session.control_lengths_unknown_fields_and_truncation",
+        "session.ready_confirmation_and_early_data",
+        "session.connection_bound_identifier",
+        "session.datagram_limits_both_directions",
+        "session.datagram_header_and_payload_integrity",
+        "session.loopback_1000_unique_datagrams",
+        "session.valid_echo_after_rejection",
+        "session.handshake_visibility_capture",
+        "session.native_cli_reports"
+      ],
+      "live_required": [
+        "session.native_and_node_authenticated_echo_twice",
+        "session.remote_990_of_1000_datagrams",
+        "session.outer_handshake_capture",
+        "node.v_300s_before_5s_during_after",
+        "local.network_preservation"
+      ]
+    },
+    {
+      "check_level": 3,
+      "implementation": "pending",
+      "name": "Isolated TUN"
+    },
+    {
+      "check_level": 4,
+      "implementation": "pending",
+      "name": "Internet forwarding and native fetch"
+    },
+    {
+      "check_level": 5,
+      "implementation": "pending",
+      "name": "DNS and namespace full routing"
+    },
+    {
+      "check_level": 6,
+      "implementation": "pending",
+      "name": "MTU IPv6 and UDP"
+    },
+    {
+      "check_level": 7,
+      "implementation": "pending",
+      "name": "Transport interface"
+    },
+    {
+      "check_level": 8,
+      "implementation": "pending",
+      "name": "Reconnect"
+    },
+    {
+      "check_level": 9,
+      "implementation": "pending",
+      "name": "Capped regression and reporting"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "version": 2, "type": "mosaic", "mode": "diagnostic",
+  "server": {"address": "203.0.113.10:443", "name": "relay.example.net"},
+  "transport": {"type": "quic", "alpn": "mosaic-poc/2", "idle_timeout_s": 15, "keepalive_s": 5},
+  "tls": {"trust_cert": "secrets/relay.crt"},
+  "auth": {"token_file": "secrets/client.token"},
+  "network": {"outbound_only": true, "change_host_network": false},
+  "limits": {"max_control_bytes": 4096, "queue_packets": 256}
+}
