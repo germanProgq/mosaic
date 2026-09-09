@@ -1,4 +1,5 @@
 mod diagnostic;
+mod fetch;
 mod netns_launcher;
 mod preflight;
 use clap::{Parser, Subcommand};
@@ -16,6 +17,20 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    #[command(
+        about = "Fetch verified HTTPS through an authenticated relay without a local listener."
+    )]
+    Fetch {
+        #[arg(short, long)]
+        config: PathBuf,
+        url: String,
+        #[arg(long)]
+        upload: Option<PathBuf>,
+        #[arg(long)]
+        expect_sha256: Option<String>,
+        #[arg(long)]
+        report: Option<PathBuf>,
+    },
     #[command(about = "Run an isolated Linux TUN with an inherited host UDP socket and VPN guard.")]
     IsolatedUp {
         #[arg(short, long)]
@@ -124,6 +139,23 @@ fn main() -> ExitCode {
 }
 
 async fn run(command: Command) -> ExitCode {
+    if let Command::Fetch {
+        config,
+        url,
+        upload,
+        expect_sha256,
+        report,
+    } = command
+    {
+        return fetch::run(
+            &config,
+            &url,
+            upload.as_deref(),
+            expect_sha256.as_deref(),
+            report.as_deref(),
+        )
+        .await;
+    }
     let (config, schema_only, output, preflight, diagnostic) = match command {
         Command::CheckConfig {
             config,
@@ -151,6 +183,7 @@ async fn run(command: Command) -> ExitCode {
         Command::IsolatedUp { .. }
         | Command::IsolatedDown { .. }
         | Command::IsolatedWorker { .. } => return ExitCode::from(2),
+        Command::Fetch { .. } => return ExitCode::from(2),
     };
     let mut report = Report::new(if schema_only {
         "schema-only"

@@ -679,9 +679,13 @@ name = "mosaic-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "libc",
  "quinn",
  "rcgen",
+ "ring",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -689,6 +693,9 @@ dependencies = [
  "subtle",
  "tempfile",
  "tokio",
+ "tokio-rustls",
+ "url",
+ "webpki-roots",
 ]
 
 [[package]]

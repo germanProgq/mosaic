@@ -116,7 +116,7 @@ pub struct RelayTls {
     pub cert: PathBuf,
     pub key: PathBuf,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fetch {
     pub allow: Vec<Destination>,
@@ -124,7 +124,7 @@ pub struct Fetch {
     pub max_bytes: u64,
     pub timeout_s: u64,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Destination {
     pub host: String,

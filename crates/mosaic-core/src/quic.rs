@@ -321,10 +321,18 @@ async fn serve_connection(
     pacer: Option<Arc<Pacer>>,
     settings: Arc<session::Settings>,
     tunnel: Option<Arc<crate::config::Tunnel>>,
+    fetch_pacer: Arc<crate::tcp_connect::Pacer>,
 ) {
     let Ok(ready) = session::accept(&connection, &settings).await else {
         return;
     };
+    if ready.mode == "fetch" {
+        if let Some(fetch) = &settings.fetch {
+            crate::tcp_connect::serve(&connection, fetch, settings.control_limit, fetch_pacer)
+                .await;
+        }
+        return;
+    }
     if ready.mode == "tunnel" {
         #[cfg(target_os = "linux")]
         if let Some(config) = tunnel {
@@ -474,6 +482,7 @@ pub async fn serve_with_tunnel(
     tokio::pin!(shutdown);
     let mut connections = JoinSet::new();
     let pacer = Arc::new(Pacer::new(1.0));
+    let fetch_pacer = Arc::new(crate::tcp_connect::Pacer::default());
     loop {
         tokio::select! {
             _ = &mut shutdown => break,
@@ -488,9 +497,10 @@ pub async fn serve_with_tunnel(
                     let pacer = (!incoming.remote_address().ip().is_loopback()).then(|| pacer.clone());
                     let settings = settings.clone();
                     let tunnel = tunnel.clone();
+                    let fetch_pacer = fetch_pacer.clone();
                     connections.spawn(async move {
                         if let Ok(Ok(connection)) = timeout(CONNECT_DEADLINE, incoming).await {
-                            serve_connection(connection, pacer, settings, tunnel).await;
+                            serve_connection(connection, pacer, settings, tunnel, fetch_pacer).await;
                         }
                     });
                 }

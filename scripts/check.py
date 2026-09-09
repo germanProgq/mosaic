@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description="Repeat implemented checks and report missing deployment evidence.")
-    parser.add_argument("check_level", type=int, choices=range(10), help="0: setup, 1: QUIC connectivity, 2: authentication, 3: isolated TUN, 4–9: planned features")
+    parser.add_argument("check_level", type=int, choices=range(10), help="0: setup, 1: QUIC connectivity, 2: authentication, 3: isolated TUN, 4: Internet forwarding and native fetch, 5–9: planned features")
     parser.add_argument("--local-only", action="store_true", help="CI scope: local assertions may pass; deployment remains BLOCKED")
     args = parser.parse_args()
     os.umask(0o077)

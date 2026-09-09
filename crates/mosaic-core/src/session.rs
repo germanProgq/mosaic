@@ -21,10 +21,15 @@ pub struct Settings {
     token: [u8; 32],
     pub control_limit: usize,
     pub queue_packets: usize,
+    pub fetch: Option<crate::config::Fetch>,
     tunnel: Option<std::sync::Arc<tokio::sync::Semaphore>>,
 }
 
 impl Settings {
+    pub fn enable_fetch(&mut self, fetch: crate::config::Fetch) {
+        self.fetch = Some(fetch);
+    }
+
     pub fn enable_tunnel(&mut self) {
         self.tunnel = Some(std::sync::Arc::new(tokio::sync::Semaphore::new(1)));
     }
@@ -38,6 +43,7 @@ impl Settings {
         Ok(Self {
             token: read_token(&c.auth.token_file)?,
             tunnel: None,
+            fetch: None,
             control_limit: c.limits.max_control_bytes,
             queue_packets: c.limits.queue_packets.min(frame::MAX_QUEUE_PACKETS),
         })
@@ -81,6 +87,10 @@ pub async fn authorize_tunnel(connection: &Connection, c: &ClientConfig) -> Resu
         "isolated TUN configuration required"
     );
     authorize_mode(connection, c, "tunnel").await
+}
+
+pub async fn authorize_fetch(connection: &Connection, c: &ClientConfig) -> Result<Ready> {
+    authorize_mode(connection, c, "fetch").await
 }
 
 async fn authorize_mode(
@@ -190,9 +200,13 @@ pub async fn accept(connection: &Connection, settings: &Settings) -> Result<Read
             );
             ensure!(
                 version == frame::VERSION
-                    && (mode == "diagnostic" || mode == "tunnel")
+                    && (mode == "diagnostic" || mode == "tunnel" || mode == "fetch")
                     && mtu == frame::MTU,
                 "unsupported session"
+            );
+            ensure!(
+                mode != "fetch" || settings.fetch.is_some(),
+                "fetch mode unavailable"
             );
             ensure!(
                 peer_limit >= frame::MTU + frame::PACKET_HEADER_BYTES,

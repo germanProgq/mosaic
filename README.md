@@ -1,8 +1,8 @@
 # Mosaic prototype
 
-Native setup, authenticated QUIC diagnostics, bounded packet framing and Linux isolated TUN support are implemented. The client verifies the relay certificate before sending its token and completes SessionInit, SessionReady and ClientReady before stream or datagram echoes are accepted.
+Native setup, authenticated QUIC diagnostics, bounded packet framing, Linux isolated TUN, native HTTPS fetch and dedicated relay forwarding tools are implemented. The client verifies the relay certificate before sending its token and completes SessionInit, SessionReady and ClientReady before stream or datagram echoes are accepted.
 
-Live Linux TUN traffic, packet rejection and cleanup have been verified on both supplied servers. The complete plan remains blocked by the native Mac QUIC path and incomplete uninterrupted automation; see [the server test record](docs/testing/README.md). Native HTTPS through the relay, Internet forwarding, namespace DNS/default routing and reconnect remain planned features. `preflight` HTTPS uses ordinary host egress. `fetch` remains unavailable. Local test results do not certify live deployment or VPN preservation.
+Live Linux TUN traffic, packet rejection and cleanup have been verified on both supplied servers. The complete plan remains blocked by the native Mac QUIC path and incomplete uninterrupted automation; see [the server test record](docs/testing/README.md). Native fetch and Internet forwarding have local implementation checks; live egress acceptance remains incomplete. Namespace DNS/default routing and reconnect remain planned features. `preflight` HTTPS uses ordinary host egress. See [the forwarding and fetch guide](docs/egress/README.md). Local test results do not certify live deployment or VPN preservation.
 
 ## Authenticated diagnostics
 
@@ -12,7 +12,7 @@ On the inventoried relay, with a binary built for its OS/CPU and its existing pr
 ./mosaic-relay -c relay.json --diagnostic-only
 ```
 
-The unauthenticated `--echo-only` service has been removed. The diagnostic service validates its config and credentials, opens only the configured UDP listener, emits a redacted readiness report and serves until SIGINT/SIGTERM. Binding UDP 443 requires appropriate existing privileges. It cannot open TUN or destination TCP connections. Running without `--diagnostic-only`, `--tunnel` or `--check-config` returns BLOCKED.
+The unauthenticated `--echo-only` service has been removed. The diagnostic service validates its config and credentials, opens only the configured UDP listener, emits a redacted readiness report and serves until SIGINT/SIGTERM. Binding UDP 443 requires appropriate existing privileges. It cannot open TUN or destination TCP connections. Running without `--diagnostic-only`, `--fetch`, `--tunnel` or `--check-config` returns BLOCKED.
 
 On the native client:
 
@@ -56,7 +56,7 @@ sudo ./mosaic-client isolated-up -c configs/client-node.json \
 
 The launcher requires Python 3, the existing inventory tools, Linux namespace-cookie and pidfd support, root for setup, and a configured non-root account. The policy must match the relay IP, namespace and tunnel subnet. The guard verifies the baseline before setup, then checks host configuration, exact socket/namespace ownership and VPN health every five seconds. A failed probe, changed egress, drift, missed sampling deadline, excessive rolling latency or worker RSS above 256 MiB stops the run. Each packet pump has bounded queues and a capped schedule. These checks do not constitute a CPU reservation.
 
-The worker’s namespace contains only loopback and its TUN, with the configured connected /30 and MTU 1100. TUN IPv6 is disabled. No veth, host route, firewall, host forwarding, resolver change or Internet route is installed. The relay likewise adds only its TUN and connected subnet; forwarding and NAT are separate future work.
+The worker’s namespace contains only loopback and its TUN, with the configured connected /30 and MTU 1100. TUN IPv6 is disabled. No veth, host route, firewall, host forwarding, resolver change or Internet route is installed. The relay service likewise adds only its TUN and connected subnet; the dedicated forwarding helper separately configures forwarding and NAT.
 
 With the default example addresses, inspect and test from another administration session:
 
@@ -117,13 +117,13 @@ Rust is pinned to 1.96.0, with resolved dependencies in `Cargo.lock`. Developer 
 
 ```sh
 cargo build --workspace --locked
-python3 scripts/check.py 2 --local-only
-python3 scripts/check.py 2
+python3 scripts/check.py 4 --local-only
+python3 scripts/check.py 4
 ```
 
 The runner checks formatting, Clippy, native builds, Rust config/credential, session rejection, captured handshake and real loopback QUIC tests, plus Python CLI/monitor tests. The QUIC tests cover the full echo matrix, real TLS trust/name/ALPN rejections, silent UDP timeout, rejected streams, and fresh relay restart. Native CLI tests independently launch and stop exact child relay processes, verify reports and check UDP-port release. Tests run twice with fresh processes. Each subprocess has a deadline; output and JSON reports live in owner-only `results/checks-*/` directories. Local tests generate disposable certificates in temporary directories and remove them afterwards.
 
-`--local-only` returns 0 only for successful local checks, with `scope: local-only` and `deployment_status: BLOCKED`. The default deployment command returns 2 while live gates are incomplete. The original plan’s `scripts/check.sh` command is now `python3 scripts/check.py`; `scripts/node-baseline.sh` is now `python3 tools/network/baseline.py`. The numeric check level selects setup (0), QUIC connectivity (1), authentication and framing (2), isolated TUN (3), or planned features (4–9). Levels 4–9 run the existing checks and report each unimplemented feature as BLOCKED; missing tests are never treated as passes. The required live assertions are listed in `tests/manifest.json`. The current runner deliberately cannot certify live deployment from hand-authored evidence files.
+`--local-only` returns 0 only for successful local checks, with `scope: local-only` and `deployment_status: BLOCKED`. The default deployment command returns 2 while live gates are incomplete. The original plan’s `scripts/check.sh` command is now `python3 scripts/check.py`; `scripts/node-baseline.sh` is now `python3 tools/network/baseline.py`. The numeric check level selects setup (0), QUIC connectivity (1), authentication and framing (2), isolated TUN (3), Internet forwarding and native fetch (4), or planned features (5–9). Levels 5–9 run the existing checks and report each unimplemented feature as BLOCKED; missing tests are never treated as passes. The required live assertions are listed in `tests/manifest.json`. The current runner deliberately cannot certify live deployment from hand-authored evidence files.
 
 Build/package for the current native target:
 
@@ -149,7 +149,7 @@ Copy/edit `configs/relay.example.json` to `configs/relay.json`, then on the rela
 ./mosaic-relay -c configs/relay.json --check-config
 ```
 
-This validates the certificate/key pairing, one-owner tunnel settings and bounded fetch configuration, without opening a listener. Inventory public IPv4, existing SSH, UDP 443 occupancy/firewall policy, ordinary DNS/HTTPS and `/dev/net/tun` on the actual dedicated relay before deployment. Port availability is not proof of UDP reachability; that requires QUIC. The tools do not configure forwarding, NAT or inbound policy.
+This validates the certificate/key pairing, one-owner tunnel settings and bounded fetch configuration, without opening a listener. Inventory public IPv4, existing SSH, UDP 443 occupancy/firewall policy, ordinary DNS/HTTPS and `/dev/net/tun` on the actual dedicated relay before deployment. Port availability is not proof of UDP reachability; that requires QUIC. The relay service does not configure forwarding, NAT or inbound policy. The dedicated forwarding helper is described in [the egress guide](docs/egress/README.md).
 
 ## Shared Linux node baseline
 

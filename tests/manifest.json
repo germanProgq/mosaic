@@ -90,8 +90,28 @@
     },
     {
       "check_level": 4,
-      "implementation": "pending",
-      "name": "Internet forwarding and native fetch"
+      "implementation": "local native HTTPS, relay forwarding and namespace egress checks",
+      "name": "Internet forwarding and native fetch",
+      "local": [
+        "fetch.real_quic_tcp_destination_tls",
+        "fetch.allowlist_private_and_metadata_rejection",
+        "fetch.chunked_http_upload_and_sha256",
+        "fetch.truncated_redirected_and_oversized_response_rejection",
+        "fetch.native_cli_redaction_and_shutdown",
+        "forwarding.scoped_rules_ownership_and_cleanup",
+        "egress.public_dns_pins_and_namespace_only_commands",
+        "fetch.request_budget_headers_datagrams_and_deadline"
+      ],
+      "live_required": [
+        "fetch.native_https_10_of_10",
+        "egress.namespace_https_10_of_10",
+        "egress.both_paths_match_measured_relay_ip",
+        "egress.tun_nat_counters_and_pre_post_nat_captures",
+        "egress.deterministic_16mib_download_upload_sha256",
+        "egress.dedicated_relay_firewall_setup_cleanup",
+        "node.v_300s_before_5s_during_after",
+        "local.network_preservation"
+      ]
     },
     {
       "check_level": 5,
