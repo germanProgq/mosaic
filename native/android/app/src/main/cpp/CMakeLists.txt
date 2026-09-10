@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(mosaic)
+add_library(mosaic_native SHARED IMPORTED)
+set_target_properties(mosaic_native PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libmosaic_native.so")
+add_library(mosaic_jni SHARED bridge.cpp)
+target_include_directories(mosaic_jni PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../apple")
+target_link_libraries(mosaic_jni mosaic_native android)

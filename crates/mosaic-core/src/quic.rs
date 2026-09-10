@@ -124,9 +124,10 @@ async fn connect_endpoint(c: &ClientConfig, endpoint: Endpoint) -> Result<Client
             endpoint.close(0u32.into(), b"handshake failed");
             return Err(e.into());
         }
-        Err(_) => {
+        Err(error) => {
             endpoint.close(0u32.into(), b"handshake deadline");
-            anyhow::bail!("QUIC handshake exceeded five seconds");
+            return Err(anyhow::Error::new(error)
+                .context("connection did not complete within five seconds"));
         }
     };
     Ok(ClientConnection {

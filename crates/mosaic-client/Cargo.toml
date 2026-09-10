@@ -11,6 +11,7 @@ clap.workspace = true
 mosaic-core.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
+mosaic-native = { path = "../mosaic-native" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

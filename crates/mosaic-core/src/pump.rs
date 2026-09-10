@@ -125,7 +125,10 @@ pub async fn run<T: PacketIo>(
         result = send_packets => result,
         result = receive_packets => result,
         result = write_tun => result,
-        _ = connection.accept_bi() => Err(anyhow::anyhow!("streams are unavailable in tunnel mode")),
+        stream = connection.accept_bi() => match stream {
+            Err(error) => Err(error.into()),
+            Ok(_) => Err(anyhow::anyhow!("streams are unavailable in tunnel mode")),
+        },
     };
     connection.close(1u32.into(), b"tunnel stopped");
     result

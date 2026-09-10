@@ -52,6 +52,17 @@ impl Settings {
 
 #[derive(Debug)]
 pub struct SizeError;
+
+#[derive(Debug)]
+struct BusyError;
+
+impl std::fmt::Display for BusyError {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str("tunnel already owned")
+    }
+}
+
+impl std::error::Error for BusyError {}
 impl std::fmt::Display for SizeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("datagram size limit must fit 1112 bytes")
@@ -83,8 +94,8 @@ pub async fn authorize(connection: &Connection, c: &ClientConfig) -> Result<Read
 
 pub async fn authorize_tunnel(connection: &Connection, c: &ClientConfig) -> Result<Ready> {
     ensure!(
-        c.mode == "isolated_tun",
-        "isolated TUN configuration required"
+        c.mode == "isolated_tun" || c.mode == "native_tun",
+        "TUN configuration required"
     );
     authorize_mode(connection, c, "tunnel").await
 }
@@ -220,7 +231,7 @@ pub async fn accept(connection: &Connection, settings: &Settings) -> Result<Read
                         .context("tunnel mode unavailable")?
                         .clone()
                         .try_acquire_owned()
-                        .context("tunnel already owned")?,
+                        .map_err(|_| BusyError)?,
                 )
             } else {
                 None
@@ -273,7 +284,9 @@ pub async fn accept(connection: &Connection, settings: &Settings) -> Result<Read
     .context("session exceeded five seconds")
     .and_then(|r| r);
     if let Err(error) = &result {
-        if error.is::<SizeError>() {
+        if error.is::<BusyError>() {
+            connection.close(3u32.into(), b"tunnel already owned");
+        } else if error.is::<SizeError>() {
             connection.close(
                 SIZE_ERROR.into(),
                 b"datagram size limit must fit 1112 bytes",

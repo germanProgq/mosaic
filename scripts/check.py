@@ -30,6 +30,7 @@ def main():
     files.extend((ROOT / "configs").glob("*.example.json"))
     for name in ("crates", "scripts", "tests", "tools", "docs"):
         files.extend(path for path in (ROOT / name).rglob("*") if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc")
+    files.extend(path for path in (ROOT / "native").rglob("*") if path.is_file() and not any(part in {"build", ".gradle", ".cxx", "jniLibs", "__pycache__"} for part in path.relative_to(ROOT / "native").parts) and path.name != "local.properties")
     for path in sorted(files):
         content = path.read_bytes()
         source.update(str(path.relative_to(ROOT)).encode() + b"\0")
@@ -62,7 +63,7 @@ def main():
     report["required_live_gates"] = [gate for check in manifest["checks"][:args.check_level + 1] for gate in check.get("live_required", [])]
     if not args.local_only:
         assertion(f"checks.{args.check_level}.deployment", "BLOCKED", "required live relay/VPN-preservation assertions remain incomplete; local tests cannot complete deployment gates")
-        for target in ("macos", "windows", "relay"):
+        for target in ("macos", "windows", "linux", "ios", "android", "relay"):
             assertion(f"delivery.{target}", "BLOCKED", manifest["delivery"][target]["reason"])
     with (directory / "report.json").open("x") as output:
         json.dump(report, output, indent=2)

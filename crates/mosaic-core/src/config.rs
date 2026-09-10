@@ -1,9 +1,8 @@
 //! Strict, bounded configuration parsing. Errors never include configuration values.
 use anyhow::{Result, bail, ensure};
 use rustls::pki_types::CertificateDer;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
-    fs::File,
     io::{BufReader, Read},
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
@@ -11,7 +10,7 @@ use std::{
 
 const CONFIG_BYTES: u64 = 64 * 1024;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {
     pub version: u8,
@@ -29,13 +28,13 @@ pub struct ClientConfig {
     pub dns: Option<Dns>,
     pub test_limits: Option<TestLimits>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Server {
     pub address: SocketAddr,
     pub name: String,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Transport {
     #[serde(rename = "type")]
@@ -44,29 +43,29 @@ pub struct Transport {
     pub idle_timeout_s: u64,
     pub keepalive_s: u64,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientTls {
     pub trust_cert: PathBuf,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Auth {
     pub token_file: PathBuf,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Network {
     pub outbound_only: bool,
     pub change_host_network: bool,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
     pub max_control_bytes: usize,
     pub queue_packets: usize,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Isolation {
     pub namespace: String,
@@ -74,7 +73,7 @@ pub struct Isolation {
     pub host_network_changes: String,
     pub preserve_existing_vpn: bool,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tunnel {
     pub name: String,
@@ -83,18 +82,18 @@ pub struct Tunnel {
     pub mtu: u16,
     pub ipv6: String,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dns {
     pub servers: Vec<Ipv4Addr>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TestLimits {
     pub max_mbps: f64,
     pub parallel_flows: u8,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RelayConfig {
     pub version: u8,
@@ -110,13 +109,13 @@ pub struct RelayConfig {
     pub tunnel_owners: u8,
     pub fetch: Fetch,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RelayTls {
     pub cert: PathBuf,
     pub key: PathBuf,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fetch {
     pub allow: Vec<Destination>,
@@ -124,7 +123,7 @@ pub struct Fetch {
     pub max_bytes: u64,
     pub timeout_s: u64,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Destination {
     pub host: String,
@@ -132,7 +131,21 @@ pub struct Destination {
 }
 
 pub fn read_bounded(path: &Path, limit: u64, private: bool) -> Result<Vec<u8>> {
-    let f = File::open(path).map_err(|_| anyhow::anyhow!("required file cannot be opened"))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | if private { libc::O_NOFOLLOW } else { 0 });
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let f = options
+        .open(path)
+        .map_err(|_| anyhow::anyhow!("required file cannot be opened"))?;
     let meta = f
         .metadata()
         .map_err(|_| anyhow::anyhow!("cannot inspect required file"))?;
@@ -148,8 +161,19 @@ pub fn read_bounded(path: &Path, limit: u64, private: bool) -> Result<Vec<u8>> {
             "secret file must have owner-only permissions (0600)"
         );
     }
-    #[cfg(not(unix))]
-    let _ = private;
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            meta.file_attributes()
+                & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+                == 0,
+            "required file must not be a reparse point"
+        );
+        if private {
+            crate::private_file::check(&f)?;
+        }
+    }
     let mut data = Vec::new();
     f.take(limit + 1)
         .read_to_end(&mut data)
@@ -213,7 +237,7 @@ fn common(version: u8, kind: &str, t: &Transport, l: &Limits) -> Result<()> {
     );
     Ok(())
 }
-fn tunnel(t: &Tunnel) -> Result<Ipv4Addr> {
+pub fn tunnel(t: &Tunnel) -> Result<Ipv4Addr> {
     ensure!(
         identifier(&t.name) && t.name.starts_with("mosaic"),
         "TUN name must be a Mosaic-owned interface name"
@@ -245,31 +269,60 @@ fn tunnel(t: &Tunnel) -> Result<Ipv4Addr> {
 impl ClientConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let mut c: Self = parse(path)?;
-        common(c.version, &c.kind, &c.transport, &c.limits)?;
+        c.validate()?;
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
+        resolve(base, &mut c.tls.trust_cert);
+        resolve(base, &mut c.auth.token_file);
+        Ok(c)
+    }
+    pub fn validate(&self) -> Result<()> {
+        common(self.version, &self.kind, &self.transport, &self.limits)?;
         ensure!(
-            c.network.outbound_only && !c.network.change_host_network,
-            "client must be outbound-only with host network changes forbidden"
+            self.network.outbound_only
+                && (self.network.change_host_network == (self.mode == "native_tun")),
+            "only native TUN mode may request host network changes"
         );
         ensure!(
-            c.server.address.port() != 0
-                && !c.server.address.ip().is_unspecified()
-                && !c.server.address.ip().is_multicast(),
+            self.server.address.port() != 0
+                && !self.server.address.ip().is_unspecified()
+                && !self.server.address.ip().is_multicast(),
             "invalid relay socket address"
         );
         ensure!(
-            dns_name(&c.server.name),
+            dns_name(&self.server.name),
             "server name must be a DNS certificate name"
         );
-        match c.mode.as_str() {
+        match self.mode.as_str() {
+            "native_tun" => {
+                ensure!(
+                    self.isolation.is_none() && self.test_limits.is_none(),
+                    "native mode must not contain shared-node isolation settings"
+                );
+                ensure!(
+                    self.server.address.is_ipv4(),
+                    "native mode currently requires an IPv4 relay"
+                );
+                tunnel(
+                    self.tunnel
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("missing native tunnel settings"))?,
+                )?;
+                ensure!(
+                    self.dns
+                        .as_ref()
+                        .is_some_and(|dns| dns.servers == [Ipv4Addr::new(1, 1, 1, 1)]),
+                    "native DNS must use only 1.1.1.1 through the tunnel"
+                );
+            }
             "diagnostic" => ensure!(
-                c.isolation.is_none()
-                    && c.tunnel.is_none()
-                    && c.dns.is_none()
-                    && c.test_limits.is_none(),
+                self.isolation.is_none()
+                    && self.tunnel.is_none()
+                    && self.dns.is_none()
+                    && self.test_limits.is_none(),
                 "diagnostic mode must not contain TUN settings"
             ),
             "isolated_tun" => {
-                let i = c
+                let i = self
                     .isolation
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("missing isolation settings"))?;
@@ -282,11 +335,11 @@ impl ClientConfig {
                     "unsafe isolation settings"
                 );
                 tunnel(
-                    c.tunnel
+                    self.tunnel
                         .as_ref()
                         .ok_or_else(|| anyhow::anyhow!("missing tunnel settings"))?,
                 )?;
-                let d = c
+                let d = self
                     .dns
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("missing namespace DNS"))?;
@@ -294,7 +347,7 @@ impl ClientConfig {
                     d.servers == [Ipv4Addr::new(1, 1, 1, 1)],
                     "namespace DNS must use only 1.1.1.1"
                 );
-                let l = c
+                let l = self
                     .test_limits
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("missing test limits"))?;
@@ -305,10 +358,7 @@ impl ClientConfig {
             }
             _ => bail!("unsupported client mode"),
         }
-        let base = path.parent().unwrap_or_else(|| Path::new("."));
-        resolve(base, &mut c.tls.trust_cert);
-        resolve(base, &mut c.auth.token_file);
-        Ok(c)
+        Ok(())
     }
     pub fn check_credentials(&self) -> Result<()> {
         read_token(&self.auth.token_file)?;

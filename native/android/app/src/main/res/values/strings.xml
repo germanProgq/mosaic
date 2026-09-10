@@ -1,0 +1,7 @@
+<resources>
+    <string name="import_configuration">Import configuration</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="vpn_settings">VPN permissions and protection</string>
+    <string name="protection">Enable Always-on VPN and Block connections without VPN for Mosaic in Android VPN settings. Android retains this protection after a crash or reboot. To restore ordinary networking after disconnect, turn those settings off. Mosaic carries IPv4 and tunnel DNS; IPv6 is blocked.</string>
+</resources>

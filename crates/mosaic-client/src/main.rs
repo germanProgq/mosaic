@@ -1,5 +1,6 @@
 mod diagnostic;
 mod fetch;
+mod native;
 mod netns_launcher;
 mod preflight;
 use clap::{Parser, Subcommand};
@@ -12,7 +13,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[derive(Parser)]
 #[command(
     version,
-    about = "Mosaic diagnostics and isolated Linux testing; desktop VPN unavailable"
+    about = "Mosaic native VPN, authenticated diagnostics and isolated Linux testing"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -20,6 +21,37 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    #[command(about = "Install or activate Mosaic's native networking component.")]
+    Setup {
+        #[arg(long)]
+        user: Option<u32>,
+        #[arg(long)]
+        owner_sid: Option<String>,
+    },
+    #[command(
+        about = "Export a private native VPN configuration with embedded client credentials."
+    )]
+    ExportConfig {
+        #[arg(short, long)]
+        config: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    #[command(
+        about = "Import a private .mosaic configuration into the installed native component."
+    )]
+    Import {
+        #[arg(short, long)]
+        config: PathBuf,
+    },
+    #[command(about = "Connect ordinary application traffic through the installed native VPN.")]
+    Connect,
+    #[command(about = "Disconnect and remove Mosaic-owned networking state.")]
+    Disconnect,
+    #[command(about = "Read the installed native VPN connection status.")]
+    Status,
+    #[command(about = "Remove the disconnected native component and its private configuration.")]
+    Uninstall,
     #[command(
         about = "Fetch verified HTTPS from this process through the relay; other application traffic is unchanged."
     )]
@@ -111,6 +143,9 @@ enum Command {
 }
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if native::handles(&cli.command) {
+        return native::run(cli.command);
+    }
     match cli.command {
         Command::IsolatedUp {
             config,
@@ -199,7 +234,7 @@ async fn run(command: Command) -> ExitCode {
         | Command::IsolatedDown { .. }
         | Command::IsolatedExec { .. }
         | Command::IsolatedWorker { .. } => return ExitCode::from(2),
-        Command::Fetch { .. } => return ExitCode::from(2),
+        _ => return ExitCode::from(2),
     };
     let mut report = Report::new(if schema_only {
         "schema-only"

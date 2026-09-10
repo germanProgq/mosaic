@@ -12,7 +12,7 @@ def exclude_owned_udp(state, policy):
     if not spec:
         return []
     directory = Path(spec['directory'])
-    assert directory.parent == Path('/run') and directory.name.startswith('mosaic-connectivity-')
+    assert directory.parent in (Path('/run'), Path('/opt')) and directory.name.startswith('mosaic-connectivity-')
     assert not directory.is_symlink()
     state['mosaic_binary_hashes'] = {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in spec['binaries']}
     assert state['mosaic_binary_hashes'] == spec['binaries']

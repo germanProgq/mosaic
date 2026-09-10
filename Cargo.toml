@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mosaic-core", "crates/mosaic-client", "crates/mosaic-relay"]
+members = ["crates/mosaic-core", "crates/mosaic-client", "crates/mosaic-relay", "crates/mosaic-native"]
 resolver = "2"
 
 [workspace.package]

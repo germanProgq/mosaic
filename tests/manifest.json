@@ -148,8 +148,18 @@
     },
     {
       "check_level": 8,
-      "implementation": "pending",
-      "name": "Reconnect"
+      "implementation": "shared native reconnect and real loopback outage tests",
+      "name": "Reconnect",
+      "local": [
+        "native.route_readiness_and_path_change",
+        "native.fresh_authorization_after_three_20s_outages",
+        "native.invalid_credentials_stop_retries",
+        "native.bounded_queues_and_stop_cancellation"
+      ],
+      "live_required": [
+        "reconnect.installed_device_three_20s_outages_recovery_within_45s",
+        "protection.no_public_fallback_during_outage_and_component_failure"
+      ]
     },
     {
       "check_level": 9,
@@ -166,11 +176,11 @@
     "supported_desktop_targets": [],
     "macos": {
       "status": "BLOCKED",
-      "reason": "Native tunnel, routing, DNS, failure protection, privileged setup, installer and platform acceptance are missing."
+      "reason": "Native app and packet-tunnel system extension compile on arm64 and x86_64. Valid signing identities/profiles, signed installation and device acceptance are unavailable."
     },
     "windows": {
       "status": "BLOCKED",
-      "reason": "Native adapter, routing, DNS, failure protection, service, installer and platform acceptance are missing."
+      "reason": "Native Wintun, routing, DNS, persistent WFP protection and restricted service are implemented; the GNU cross-build passes. MSVC MSI build and installed Windows acceptance are unavailable."
     },
     "relay": {
       "status": "BLOCKED",
@@ -211,6 +221,37 @@
       "security.private_key_stays_on_relay_certificate_expiry_and_credential_replacement",
       "network.forwarding_policy_preserves_administration",
       "installation.upgrade_uninstall_and_interrupted_setup_owned_state"
-    ]
+    ],
+    "implementation_targets": {
+      "macos": [
+        "macOS 14+ arm64",
+        "macOS 14+ x86_64"
+      ],
+      "windows": [
+        "Windows 10 2004+ x64"
+      ],
+      "linux": [
+        "Linux x64 with systemd and systemd-resolved"
+      ],
+      "ios": [
+        "iOS 17+ arm64"
+      ],
+      "android": [
+        "Android 10+ arm64-v8a",
+        "Android 10+ x86_64"
+      ]
+    },
+    "linux": {
+      "status": "BLOCKED",
+      "reason": "Compiled host TUN, nftables, resolved and systemd integration cross-builds. Dedicated host networking, setup recovery and cleanup acceptance are unavailable."
+    },
+    "ios": {
+      "status": "BLOCKED",
+      "reason": "App and packet-tunnel provider are implemented. Full Xcode iOS SDK, provisioning and device acceptance are unavailable."
+    },
+    "android": {
+      "status": "BLOCKED",
+      "reason": "Rust arm64/x64, Java/JNI, debug APK and lint build successfully. Installed-device routing, lockdown, recovery and package acceptance are unavailable."
+    }
   }
 }

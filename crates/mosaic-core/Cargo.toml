@@ -34,7 +34,7 @@ path = "tests/net/echo.rs"
 name = "protocol_rejects"
 path = "tests/protocol/rejects.rs"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [[test]]
@@ -48,3 +48,6 @@ path = "tests/net/egress.rs"
 [[test]]
 name = "net_dns"
 path = "tests/net/dns.rs"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
