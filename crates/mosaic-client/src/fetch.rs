@@ -14,6 +14,11 @@ pub async fn run(
 ) -> ExitCode {
     let mut report = Report::new("native-fetch");
     report.check_level = 4;
+    report.add(
+        "fetch.scope",
+        Status::Pass,
+        "HTTPS from this process only; ordinary browser and application traffic, system routing and DNS are unchanged; this is not a desktop VPN connection",
+    );
     let work = async {
         let config = ClientConfig::load(config)?;
         config.check_credentials()?;

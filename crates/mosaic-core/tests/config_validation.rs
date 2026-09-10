@@ -92,6 +92,9 @@ fn isolation_rejects_bypasses_and_invalid_subnets() {
         ("/test_limits/max_mbps", json!(1.1)),
         ("/test_limits/parallel_flows", json!(2)),
         ("/dns/servers", json!([])),
+        ("/dns/servers", json!(["127.0.0.53"])),
+        ("/dns/servers", json!(["10.77.0.1"])),
+        ("/dns/servers", json!(["1.1.1.1", "8.8.8.8"])),
     ] {
         let mut value = example("client-node");
         *value.pointer_mut(pointer).unwrap() = bad;

@@ -1,5 +1,7 @@
 # Internet forwarding and native HTTPS
 
+This is a development validation guide. Native fetch affects only its own HTTPS request, and the Linux TUN path affects only namespace applications. Neither connects a desktop VPN. The Python forwarding helper remains a developer administration tool until supported compiled relay setup and cleanup are implemented and verified as required by [fixes.md](../../fixes.md).
+
 Native fetch carries verified HTTPS through an authenticated relay TCP connection. The Linux namespace check carries real IPv4 packets through TUN and relay NAT. Reports keep these paths separate. Local checks pass only implementation assertions; live Internet egress, NAT captures, fixture integrity and VPN preservation still require the dedicated relay and isolated client node. Earlier native Mac QUIC failures remain unresolved.
 
 ## Native fetch
@@ -57,7 +59,7 @@ Keep forwarding configured across normal relay reconnect/restart checks. If setu
 
 ## Isolated namespace egress
 
-Start the existing guarded `isolated-up` launcher after a fresh five-minute baseline. The namespace must contain only loopback and its TUN with no default route. Measure the relay's ordinary egress independently and resolve current A records for example.com and api.ipify.org. With the guard running, use:
+Start the existing guarded `isolated-up` launcher after a fresh five-minute baseline. The namespace must contain only loopback and its TUN. The current launcher installs a namespace default route through TUN. Measure the relay's ordinary egress independently and resolve current A records for example.com and api.ipify.org. With the guard running, use:
 
 ```sh
 sudo python3 tools/network/egress.py --namespace mosaic-test \
@@ -65,7 +67,7 @@ sudo python3 tools/network/egress.py --namespace mosaic-test \
   --relay-egress MEASURED_RELAY_IP --report results/tun-egress.json
 ```
 
-The helper verifies the namespace/process ownership and recent preservation samples. It checks both pins against current host-side A records using a bounded lookup, then adds only two /32 routes inside the namespace. Curl runs there as the configured non-root account, with verified TLS, fixed DNS pins, no proxy, no redirect, a 20-second deadline and a capped rate. It requires ten successful requests to each host and an exact egress match on every public-IP response. Cleanup deletes only the routes added by this run; final namespace teardown also removes them after abrupt process death. No host route or resolver changes are made.
+The helper verifies the namespace/process ownership and recent preservation samples. It checks both pins against current host-side A records using a bounded lookup, then uses the existing TUN default route. When testing an older launcher without a default, it adds only two temporary /32 routes inside the namespace. Curl runs there as the configured non-root account, with verified TLS, fixed DNS pins, no proxy, no redirect, a 20-second deadline and a capped rate. It requires ten successful requests to each host and an exact egress match on every public-IP response. Cleanup deletes only the routes added by this run; final namespace teardown also removes them after abrupt process death. No host route or resolver changes are made.
 
 For live acceptance, run ten native fetches to each host too, and compare both public-IP results with the independently measured relay. Record relay NAT counters and bounded pre/post-NAT captures around the namespace requests. Native fetch does not exercise TUN or those NAT rules. Download and upload a deterministic 16 MiB fixture on both paths and verify the expected SHA-256. Namespace curl fixture transfers need a longer bounded timeout, such as 900 seconds, because the existing conservative packet-pump cap includes both directions. Keep the preservation guard active throughout; serialize workloads.
 

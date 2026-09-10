@@ -44,3 +44,7 @@ path = "tests/net/isolation.rs"
 [[test]]
 name = "net_egress"
 path = "tests/net/egress.rs"
+
+[[test]]
+name = "net_dns"
+path = "tests/net/dns.rs"

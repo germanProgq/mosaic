@@ -30,7 +30,7 @@ pub async fn run(
     report.add(
         "quic.scope",
         Status::Pass,
-        "authenticated diagnostics; TUN and fetch unavailable; host routing unchanged",
+        "authenticated diagnostics only; ordinary browser and application traffic, system routing and DNS are unchanged; this is not a desktop VPN connection",
     );
     let client = match quic::connect(c).await {
         Ok(client) => client,

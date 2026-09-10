@@ -17,7 +17,7 @@ pub struct Options<'a> {
 
 pub fn launch(options: Options<'_>) -> ExitCode {
     let mut report = Report::new("isolated-tun");
-    report.check_level = 3;
+    report.check_level = 5;
     let result = ClientConfig::load(options.config).and_then(|c| {
         c.check_credentials()?;
         ensure!(
@@ -48,7 +48,7 @@ pub fn launch(options: Options<'_>) -> ExitCode {
 
 pub fn cleanup(namespace: &str, output: Option<&Path>) -> ExitCode {
     let mut report = Report::new("isolation-cleanup");
-    report.check_level = 3;
+    report.check_level = 5;
     #[cfg(target_os = "linux")]
     match linux::cleanup(namespace, false) {
         Ok(()) => report.add(
@@ -73,6 +73,22 @@ pub fn cleanup(namespace: &str, output: Option<&Path>) -> ExitCode {
     ExitCode::from(report.exit_code())
 }
 
+pub fn execute(namespace: &str, args: &[std::ffi::OsString]) -> ExitCode {
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(error) = linux::execute(namespace, args) {
+            eprintln!("FAIL isolation.execute: {error}");
+        }
+        ExitCode::from(1)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (namespace, args);
+        eprintln!("BLOCKED isolation.platform: namespace applications require Linux");
+        ExitCode::from(2)
+    }
+}
+
 pub fn worker(config: &Path, fd: i32, cookie: u64, uid: u32) -> Result<()> {
     #[cfg(target_os = "linux")]
     return linux::worker(config, fd, cookie, uid);
@@ -88,6 +104,7 @@ mod linux {
     use super::*;
     use mosaic_core::{
         linux::{self, check},
+        namespace,
         packet::Address,
         pump, quic, session,
         tun::Tun,
@@ -133,6 +150,8 @@ mod linux {
         parent: Process,
         worker: Option<Process>,
         namespace_inode: Option<u64>,
+        #[serde(default)]
+        worker_mount_inode: Option<u64>,
         mount_inode: Option<u64>,
         socket_inode: Option<u64>,
         socket_port: Option<u16>,
@@ -275,6 +294,7 @@ mod linux {
             parent: process(std::process::id())?,
             worker: None,
             namespace_inode: None,
+            worker_mount_inode: None,
             mount_inode: None,
             socket_inode: None,
             socket_port: None,
@@ -331,7 +351,7 @@ mod linux {
                     if libc::getppid() != parent {
                         return Err(std::io::Error::other("launcher exited"));
                     }
-                    check(libc::unshare(libc::CLONE_NEWNET))?;
+                    check(libc::unshare(libc::CLONE_NEWNET | libc::CLONE_NEWNS))?;
                     check(libc::fcntl(fd, libc::F_SETFD, 0))?;
                     Ok(())
                 });
@@ -341,6 +361,7 @@ mod linux {
             child = Some(worker);
             owner.worker = Some(process(pid)?);
             owner.namespace_inode = Some(fs::metadata(format!("/proc/{pid}/ns/net"))?.ino());
+            owner.worker_mount_inode = Some(fs::metadata(format!("/proc/{pid}/ns/mnt"))?.ino());
             save(&directory, &owner)?;
             let netns = Path::new("/run/netns");
             if !netns.exists() {
@@ -571,6 +592,8 @@ mod linux {
             "guard.ready",
             "guard.next",
             "guard.json",
+            "tunnel.ready",
+            "tunnel.next",
         ] {
             let path = directory.join(name);
             if path.try_exists()? {
@@ -579,6 +602,76 @@ mod linux {
         }
         fs::remove_dir(directory)?;
         Ok(())
+    }
+
+    pub fn execute(name: &str, args: &[std::ffi::OsString]) -> Result<()> {
+        root()?;
+        ensure!(!args.is_empty(), "application command required");
+        let (directory, mount) = paths(name)?;
+        let metadata = fs::symlink_metadata(&directory)?;
+        ensure!(
+            metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o077 == 0,
+            "unsafe ownership directory"
+        );
+        let owner: Owner = serde_json::from_slice(&mosaic_core::config::read_bounded(
+            &directory.join("owner.json"),
+            16384,
+            true,
+        )?)?;
+        let worker = owner.worker.as_ref().context("missing worker")?;
+        ensure!(
+            owner.namespace == name && alive(&owner.parent) && alive(worker),
+            "namespace owner is inactive"
+        );
+        ensure!(
+            fs::read(directory.join("tunnel.ready"))? == b"ready\n",
+            "namespace routing is not ready"
+        );
+        ensure!(
+            fs::metadata(directory.join("guard.ready"))?
+                .modified()?
+                .elapsed()?
+                < Duration::from_secs(10),
+            "VPN preservation guard is not current"
+        );
+        let net = File::open(format!("/proc/{}/ns/net", worker.pid))?;
+        let mounts = File::open(format!("/proc/{}/ns/mnt", worker.pid))?;
+        ensure!(
+            Some(net.metadata()?.ino()) == owner.namespace_inode
+                && Some(fs::metadata(mount)?.ino()) == owner.namespace_inode,
+            "network namespace changed"
+        );
+        ensure!(
+            Some(mounts.metadata()?.ino()) == owner.worker_mount_inode
+                && mounts.metadata()?.ino() != fs::metadata("/proc/self/ns/mnt")?.ino(),
+            "private resolver mount namespace changed"
+        );
+        ensure!(
+            alive(worker) && owner.socket_uid > 0,
+            "worker identity changed"
+        );
+        let user = unsafe { libc::getpwuid(owner.socket_uid) };
+        ensure!(!user.is_null(), "test UID has no account");
+        let gid = unsafe { (*user).pw_gid };
+        check(unsafe { libc::setns(net.as_raw_fd(), libc::CLONE_NEWNET) })?;
+        check(unsafe { libc::setns(mounts.as_raw_fd(), libc::CLONE_NEWNS) })?;
+        ensure!(
+            fs::read("/etc/resolv.conf")? == namespace::RESOLVER.as_bytes(),
+            "private resolver changed"
+        );
+        check(unsafe { libc::setgroups(0, std::ptr::null()) })?;
+        check(unsafe { libc::setgid(gid) })?;
+        check(unsafe { libc::setuid(owner.socket_uid) })?;
+        check(unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) })?;
+        let error = Command::new(&args[0])
+            .args(&args[1..])
+            .env("MOSAIC_NAMESPACE", name)
+            .env("MOSAIC_NAMESPACE_INODE", net.metadata()?.ino().to_string())
+            .env_remove("LOCALDOMAIN")
+            .env_remove("RES_OPTIONS")
+            .env_remove("HOSTALIASES")
+            .exec();
+        Err(error).context("cannot execute namespace application")
     }
 
     pub fn worker(config: &Path, fd: i32, expected_cookie: u64, uid: u32) -> Result<()> {
@@ -599,6 +692,7 @@ mod linux {
         linux::command("ip", &["link", "set", "lo", "up"])?;
         let c = ClientConfig::load(config)?;
         c.check_credentials()?;
+        namespace::private_dns()?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -607,6 +701,13 @@ mod linux {
             let ready = session::authorize_tunnel(&client.connection, &c).await.context("tunnel authorization failed")?;
             let config = c.tunnel.as_ref().context("missing TUN settings")?;
             let tun = Tun::create(config)?;
+            namespace::default_route(&config.name)?;
+            let directory = paths(&c.isolation.as_ref().context("missing isolation settings")?.namespace)?.0;
+            let mut ready_file = OpenOptions::new().write(true).create_new(true).mode(0o600).open(directory.join("tunnel.next"))?;
+            ready_file.write_all(b"ready\n")?;
+            ready_file.sync_all()?;
+            drop(ready_file);
+            fs::rename(directory.join("tunnel.next"), directory.join("tunnel.ready"))?;
             let address = config.address.split_once('/').context("invalid TUN address")?.0.parse()?;
             check(unsafe { libc::setgroups(0, std::ptr::null()) })?;
             let user = unsafe { libc::getpwuid(uid) };
@@ -618,9 +719,10 @@ mod linux {
             ensure!(unsafe { libc::getppid() } == parent, "launcher exited during privilege drop");
             check(unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) })?;
             let mut report = Report::new("isolated-tun-ready");
-            report.check_level = 3;
+            report.check_level = 5;
             report.add("isolation.socket", Status::Pass, "authenticated QUIC over inherited host-namespace UDP socket; namespace cookies differ; worker privileges dropped");
             report.add("isolation.tun", Status::Pass, "exclusive IPv4 TUN created after Ready with MTU 1100; no host route, DNS, firewall or forwarding changes");
+            report.add("isolation.routing", Status::Pass, "namespace default route uses TUN; private resolver uses only 1.1.1.1; use isolated-exec for application DNS");
             report.emit(None)?;
             let counters = Arc::new(pump::Counters::default());
             let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;

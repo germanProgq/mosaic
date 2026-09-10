@@ -77,9 +77,10 @@ def main():
         destinations = [('example.com', pinned('example.com', args.example_ip)), ('api.ipify.org', pinned('api.ipify.org', args.ipify_ip))]
         egress = public_address(args.relay_egress)
         original = json.loads(baseline.run(['ip', '-n', args.namespace, '-j', '-4', 'route', 'show', 'table', 'all']))
-        if any(route['dst'] == 'default' for route in original):
-            raise baseline.Blocked('expected namespace without default route')
-        for address in dict.fromkeys(address for _, address in destinations):
+        defaults = [route for route in original if route['dst'] == 'default']
+        if defaults and (len(defaults) != 1 or defaults[0].get('dev') != tun or 'gateway' in defaults[0]):
+            raise baseline.Blocked('namespace default route must use only TUN')
+        for address in (() if defaults else dict.fromkeys(address for _, address in destinations)):
             if any(route['dst'] in (address, address + '/32') for route in original):
                 raise baseline.Blocked('test route already exists')
             baseline.run(['ip', '-n', args.namespace, 'route', 'add', address + '/32', 'dev', tun, 'proto', 'static'])

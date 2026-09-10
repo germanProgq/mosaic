@@ -291,13 +291,8 @@ impl ClientConfig {
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("missing namespace DNS"))?;
                 ensure!(
-                    !d.servers.is_empty()
-                        && d.servers.len() <= 3
-                        && d.servers.iter().all(|ip| !ip.is_unspecified()
-                            && !ip.is_loopback()
-                            && !ip.is_multicast()
-                            && !ip.is_broadcast()),
-                    "invalid namespace DNS servers"
+                    d.servers == [Ipv4Addr::new(1, 1, 1, 1)],
+                    "namespace DNS must use only 1.1.1.1"
                 );
                 let l = c
                     .test_limits

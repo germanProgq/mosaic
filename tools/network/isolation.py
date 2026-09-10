@@ -1,5 +1,6 @@
 import argparse
 import json
+import ipaddress
 import os
 from pathlib import Path
 import re
@@ -56,6 +57,75 @@ def filter_state(state, owner, observed):
     return state
 
 
+def routing(links, routes, routes6, rules, subnet, ready):
+    names = {link["ifname"] for link in links}
+    devices = names - {"lo"}
+    if "lo" not in names or len(devices) > 1 or any(not name.startswith("mosaic") for name in devices):
+        raise baseline.Failed("namespace has an alternate interface")
+    if any(link["mtu"] != 1100 for link in links if link["ifname"] != "lo"):
+        raise baseline.Failed("TUN MTU changed")
+    if ready and len(devices) != 1:
+        raise baseline.Failed("namespace TUN is missing")
+    tun = next(iter(devices), None)
+    network = ipaddress.IPv4Network(subnet)
+    defaults = 0
+    for route in routes:
+        dev = route.get("dev")
+        kind = route.get("type", "unicast")
+        table = route.get("table", "main")
+        if dev not in names or any(key in route for key in ("gateway", "nexthops", "nhid", "encap", "via")):
+            raise baseline.Failed("namespace route has an alternate path")
+        if route.get("dst") == "default":
+            if dev != tun or kind != "unicast" or table not in ("main", 254):
+                raise baseline.Failed("namespace default route changed")
+            defaults += 1
+            continue
+        destination = ipaddress.IPv4Network(route["dst"], strict=False)
+        if kind in ("local", "broadcast"):
+            allowed = ipaddress.IPv4Network("127.0.0.0/8") if dev == "lo" else network
+            if table not in ("local", 255) or not destination.subnet_of(allowed):
+                raise baseline.Failed("namespace local route changed")
+        elif kind != "unicast" or dev != tun or table not in ("main", 254) or destination != network:
+            raise baseline.Failed("unexpected namespace route")
+    if defaults > 1 or ready and defaults != 1:
+        raise baseline.Failed("namespace must have one TUN default route")
+    for route in routes6:
+        if route.get("dev") != "lo" or route.get("dst") != "::1" or route.get("type") != "local":
+            raise baseline.Failed("namespace has external IPv6 routing")
+    expected = [(0, "local"), (32766, "main"), (32767, "default")]
+    observed = [(rule.get("priority"), rule.get("table")) for rule in rules]
+    if observed != expected or any(set(rule) - {"priority", "src", "table", "protocol"} or rule.get("src", "all") != "all" for rule in rules):
+        raise baseline.Failed("namespace policy routing changed")
+
+
+def namespace_inventory(owner, subnet, directory):
+    namespace = owner["namespace"]
+    ready = (directory / "tunnel.ready").exists()
+    if ready and (directory / "tunnel.ready").read_bytes() != b"ready\n":
+        raise baseline.Failed("namespace readiness changed")
+    links = json.loads(baseline.run(["ip", "-n", namespace, "-j", "link", "show"]))
+    routes = json.loads(baseline.run(["ip", "-n", namespace, "-j", "-4", "route", "show", "table", "all"]))
+    routes6 = json.loads(baseline.run(["ip", "-n", namespace, "-j", "-6", "route", "show", "table", "all"]))
+    rules = json.loads(baseline.run(["ip", "-n", namespace, "-j", "-4", "rule", "show"]))
+    routing(links, routes, routes6, rules, subnet, ready)
+    if owner.get("worker_mount_inode") is not None:
+        worker = owner["worker"]["pid"]
+        parent = owner["parent"]["pid"]
+        current = Path(f"/proc/{worker}/ns/mnt").stat().st_ino
+        if current != owner["worker_mount_inode"] or current == Path(f"/proc/{parent}/ns/mnt").stat().st_ino:
+            raise baseline.Failed("worker private mount namespace changed")
+        if ready:
+            prefix = ["nsenter", f"--mount=/proc/{worker}/ns/mnt", "--"]
+            resolver = baseline.run(prefix + ["cat", "/etc/resolv.conf"])
+            if resolver.strip() != "nameserver 1.1.1.1\noptions timeout:2 attempts:1 ndots:1":
+                raise baseline.Failed("namespace resolver changed")
+            names = baseline.run(prefix + ["cat", "/etc/nsswitch.conf"])
+            hosts = [line.split(":", 1)[1].strip() for line in names.splitlines() if line.split(":", 1)[0].strip() == "hosts"]
+            if hosts != ["dns"]:
+                raise baseline.Failed("namespace name service changed")
+    return {"links": links, "routes": routes, "routes6": routes6, "rules": rules}
+
+
 def isolated_inventory(policy, directory):
     owner = owner_load(directory)
     worker = owner["worker"]["pid"]
@@ -84,13 +154,7 @@ def isolated_inventory(policy, directory):
         raise baseline.Failed("worker left its namespace")
     if Path(f"/proc/{parent}/ns/net").stat().st_ino == owner["namespace_inode"]:
         raise baseline.Failed("launcher left the original namespace")
-    links = json.loads(baseline.run(["ip", "-n", owner["namespace"], "-j", "link", "show"]))
-    names = {link["ifname"] for link in links}
-    if "lo" not in names or len(names) > 2 or any(name != "lo" and not name.startswith("mosaic") for name in names):
-        raise baseline.Failed("namespace has an alternate interface")
-    for link in links:
-        if link["ifname"] != "lo" and link["mtu"] != 1100:
-            raise baseline.Failed("TUN MTU changed")
+    namespace_inventory(owner, policy["tunnel_subnet"], directory)
     status = Path(f"/proc/{worker}/status").read_text()
     rss = re.search(r"^VmRSS:\s+(\d+)\s+kB", status, re.MULTILINE)
     if rss and int(rss[1]) > 256 * 1024:

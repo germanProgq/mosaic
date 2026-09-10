@@ -115,8 +115,26 @@
     },
     {
       "check_level": 5,
-      "implementation": "pending",
-      "name": "DNS and namespace full routing"
+      "implementation": "local namespace default routing, private DNS and no-escape checks",
+      "name": "DNS and namespace full routing",
+      "local": [
+        "dns.fixed_resolver_and_direct_name_service",
+        "dns.configuration_rejects_host_and_fallback_resolvers",
+        "dns.namespace_exec_rejects_host_fallback",
+        "dns.bounded_fresh_resolver_udp_tcp_https_commands",
+        "dns.answers_egress_and_outage_error_validation",
+        "isolation.routes_rules_interfaces_and_ipv6_rejection"
+      ],
+      "live_required": [
+        "dns.namespace_resolver_udp_tcp_and_https_10_of_10",
+        "dns.tun_and_relay_query_captures",
+        "dns.relay_outage_20s_without_namespace_escape",
+        "dns.relay_restart_and_fresh_namespace_requests",
+        "dns.private_mounts_normal_kill_partial_cleanup",
+        "dns.host_resolver_unchanged",
+        "node.v_300s_before_5s_during_after",
+        "repeat.fresh_processes"
+      ]
     },
     {
       "check_level": 6,
@@ -138,5 +156,61 @@
       "implementation": "pending",
       "name": "Capped regression and reporting"
     }
-  ]
+  ],
+  "requirements": [
+    "Mosaic_Prototype_Plan_v2.docx",
+    "fixes.md"
+  ],
+  "delivery": {
+    "status": "BLOCKED",
+    "supported_desktop_targets": [],
+    "macos": {
+      "status": "BLOCKED",
+      "reason": "Native tunnel, routing, DNS, failure protection, privileged setup, installer and platform acceptance are missing."
+    },
+    "windows": {
+      "status": "BLOCKED",
+      "reason": "Native adapter, routing, DNS, failure protection, service, installer and platform acceptance are missing."
+    },
+    "relay": {
+      "status": "BLOCKED",
+      "reason": "The compiled relay exists; supported compiled forwarding setup, cleanup and service installation are missing. Python administration remains a developer tool."
+    },
+    "required_report_fields": [
+      "source_revision",
+      "source_sha256",
+      "lock_sha256",
+      "package_sha256",
+      "os_version",
+      "arch",
+      "assertions"
+    ],
+    "desktop_required": [
+      "installation.clean_machine_without_python_rust_or_repository",
+      "configuration.private_import_and_secure_credentials",
+      "connection.connect_disconnect_status_and_readable_errors",
+      "routing.ordinary_browser_and_application_https_matches_relay_egress",
+      "dns.system_resolver_through_tunnel_with_capture",
+      "routing.no_public_ipv4_or_ipv6_bypass",
+      "routing.outer_relay_path_and_network_changes",
+      "protection.startup_outage_reconnect_and_component_crash",
+      "reconnect.three_20s_outages_new_requests_within_45s",
+      "reconnect.jitter_fresh_authorization_cancel_old_pumps_discard_queues_single_owner",
+      "reconnect.stop_on_invalid_credentials_or_configuration",
+      "cleanup.disconnect_and_owned_state_conflicts",
+      "recovery.permission_denial_interrupted_setup_reboot_sleep_wake",
+      "security.invalid_certificates_tokens_and_configurations_without_secrets_or_network_changes",
+      "packets.mtu_fragmentation_udp_integrity_and_ipv6_rejection",
+      "repeat.installation_connection_and_cleanup",
+      "soak.360_healthy_cycles_bounded_resources_no_corruption_or_leaks",
+      "installation.upgrade_uninstall_preserve_unrelated_network_state",
+      "distribution.signed_package_all_components_supported_os_and_architecture"
+    ],
+    "relay_required": [
+      "installation.compiled_setup_cleanup_and_service_without_python",
+      "security.private_key_stays_on_relay_certificate_expiry_and_credential_replacement",
+      "network.forwarding_policy_preserves_administration",
+      "installation.upgrade_uninstall_and_interrupted_setup_owned_state"
+    ]
+  }
 }

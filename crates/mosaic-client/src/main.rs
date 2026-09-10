@@ -10,7 +10,10 @@ use mosaic_core::{
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
-#[command(version, about = "Mosaic native client — native diagnostics")]
+#[command(
+    version,
+    about = "Mosaic diagnostics and isolated Linux testing; desktop VPN unavailable"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -18,7 +21,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     #[command(
-        about = "Fetch verified HTTPS through an authenticated relay without a local listener."
+        about = "Fetch verified HTTPS from this process through the relay; other application traffic is unchanged."
     )]
     Fetch {
         #[arg(short, long)]
@@ -51,6 +54,15 @@ enum Command {
         #[arg(long)]
         report: Option<PathBuf>,
     },
+    #[command(
+        about = "Run an application with namespace routing and private DNS as the test user."
+    )]
+    IsolatedExec {
+        #[arg(long)]
+        namespace: String,
+        #[arg(required = true, last = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     #[command(hide = true)]
     IsolatedWorker {
         #[arg(short, long)]
@@ -72,7 +84,9 @@ enum Command {
         #[arg(long)]
         report: Option<PathBuf>,
     },
-    #[command(about = "Run authenticated session, stream and datagram diagnostics.")]
+    #[command(
+        about = "Test authenticated sessions, streams and datagrams; does not connect a desktop VPN."
+    )]
     Test {
         #[arg(short, long)]
         config: PathBuf,
@@ -114,6 +128,7 @@ fn main() -> ExitCode {
         Command::IsolatedDown { namespace, report } => {
             netns_launcher::cleanup(&namespace, report.as_deref())
         }
+        Command::IsolatedExec { namespace, args } => netns_launcher::execute(&namespace, &args),
         Command::IsolatedWorker {
             config,
             fd,
@@ -182,6 +197,7 @@ async fn run(command: Command) -> ExitCode {
         ),
         Command::IsolatedUp { .. }
         | Command::IsolatedDown { .. }
+        | Command::IsolatedExec { .. }
         | Command::IsolatedWorker { .. } => return ExitCode::from(2),
         Command::Fetch { .. } => return ExitCode::from(2),
     };

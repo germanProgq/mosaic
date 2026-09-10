@@ -3,6 +3,7 @@ pub mod fetch;
 pub mod frame;
 #[cfg(target_os = "linux")]
 pub mod linux;
+pub mod namespace;
 pub mod packet;
 pub mod pump;
 pub mod quic;

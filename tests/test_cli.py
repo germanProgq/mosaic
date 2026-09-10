@@ -57,6 +57,15 @@ class CliTests(unittest.TestCase):
             self.assertNotIn(token, result.stdout + result.stderr)
             self.assertNotIn("private-key-canary", result.stdout + result.stderr)
 
+    def test_namespace_exec_cannot_run_in_the_host_on_failure(self):
+        import platform
+        with tempfile.TemporaryDirectory(prefix="mosaic-exec-") as directory:
+            sentinel = Path(directory) / "unexpected"
+            code = 1 if platform.system() == "Linux" else 2
+            self.run_cli("mosaic-client", "isolated-exec", "--namespace", "../invalid", "--", "touch", sentinel, code=code)
+            self.assertFalse(sentinel.exists())
+        self.run_cli("mosaic-client", "isolated-exec", "--namespace", "mosaic-test", code=2)
+
     def test_incomplete_and_unimplemented_commands_do_not_pretend_to_work(self):
         self.run_cli("mosaic-client", "test", code=2)
         self.run_cli("mosaic-client", "fetch", "https://example.com", code=2)

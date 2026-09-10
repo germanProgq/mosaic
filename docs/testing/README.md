@@ -1,5 +1,7 @@
 # Live test records
 
+These historical records cover diagnostic and isolated Linux behavior only. They do not establish macOS or Windows full-device VPN support. [The corrections](../../fixes.md) and [acceptance manifest](../../tests/manifest.json) require separate installed-package evidence for both desktop clients and compiled relay setup and cleanup. Those deliverables remain BLOCKED; the original PASS and FAIL results below retain their recorded scope.
+
 ## Linux TUN and cleanup
 
 September 10, 2026: **the individual Linux checks passed across the recorded runs; the complete plan remains blocked.** The native Mac QUIC failure and privileged Mac firewall gap below remain unresolved. The second automated TUN sequence was interrupted by administrative collection failures, so its original report remains FAIL.
