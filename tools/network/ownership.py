@@ -181,7 +181,18 @@ def tunnel_signature(policy):
 def runtime_signature(policy):
     spec = policy.get('owned_jobs')
     processes = owned_processes(spec) if spec else {}
-    return tunnel_signature(policy), sorted((pid, job['start_ticks'], job['binary'], job['role']) for pid, job in processes.items())
+    records = []
+    if spec:
+        for path in sorted((Path(spec['directory']) / 'jobs').glob('*.owner.json')):
+            content = path.read_bytes()
+            job = json.loads(content)
+            process = Path('/proc') / str(job['pid'])
+            try:
+                identity = process_ticks(process), os.path.realpath(process / 'exe')
+            except (FileNotFoundError, ProcessLookupError):
+                identity = None
+            records.append((path.name, hashlib.sha256(content).hexdigest(), identity))
+    return tunnel_signature(policy), sorted((pid, job['start_ticks'], job['binary'], job['role']) for pid, job in processes.items()), records
 
 
 def stable_inventory(policy, read):

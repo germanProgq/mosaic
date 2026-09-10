@@ -107,6 +107,47 @@ class NamespaceOwnershipTests(unittest.TestCase):
 
 
 class StableInventoryTests(unittest.TestCase):
+    def test_probe_created_and_exited_during_inventory_forces_a_fresh_snapshot(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            (directory / 'jobs').mkdir()
+            policy = {'owned_jobs': {'directory': folder, 'binaries': {'mosaic-client': 'verified'}}}
+            calls = []
+            def read():
+                calls.append(True)
+                if len(calls) == 1:
+                    (directory / 'jobs/client.owner.json').write_text(json.dumps({'pid': 2147483647, 'start_ticks': '1', 'binary': 'mosaic-client', 'role': 'client'}))
+                    return {'listeners': ['exited probe', 'unrelated']}
+                return {'listeners': ['unrelated']}
+            self.assertEqual(owned.stable_inventory(policy, read), {'listeners': ['unrelated']})
+            self.assertEqual(len(calls), 2)
+
+    def test_launcher_exit_changes_signature_before_binary_exec(self):
+        import json
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            (directory / 'jobs').mkdir()
+            process = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'])
+            policy = {'owned_jobs': {'directory': folder, 'binaries': {'mosaic-client': 'verified'}}}
+            try:
+                (directory / 'jobs/client.owner.json').write_text(json.dumps({'pid': process.pid, 'start_ticks': '1', 'binary': 'mosaic-client', 'role': 'client'}))
+                from unittest.mock import patch
+                with patch.object(owned, 'process_ticks', return_value='1'), patch.object(owned.os.path, 'realpath', return_value=str(directory / 'launcher')):
+                    before = owned.runtime_signature(policy)
+                process.terminate()
+                process.wait(timeout=5)
+                after = owned.runtime_signature(policy)
+                self.assertNotEqual(before, after)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
+
     def test_owned_transition_repeats_the_complete_inventory(self):
         from unittest.mock import Mock, patch
         read = Mock(side_effect=[AssertionError('closed TUN'), {'routes': 'unchanged'}])
