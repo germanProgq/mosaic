@@ -247,7 +247,7 @@
     },
     "ios": {
       "status": "BLOCKED",
-      "reason": "App and packet-tunnel provider are implemented. Full Xcode iOS SDK, provisioning and device acceptance are unavailable."
+      "reason": "App and packet-tunnel provider compile for arm64. Valid signing identities/profiles, provisioned installation and device acceptance are unavailable."
     },
     "android": {
       "status": "BLOCKED",

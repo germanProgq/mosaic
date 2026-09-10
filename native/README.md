@@ -7,7 +7,7 @@ Mosaic now has native client implementations for macOS, Windows, Linux, iOS and 
 | macOS 14+, Apple silicon and Intel | Network Extension packet tunnel system extension, shared Keychain, on-demand connection | Developer ID signed and notarized PKG | Both application and extension compile; signing assets and installation tests unavailable |
 | Windows 10 2004+, x64 | Wintun, restricted named-pipe service, IP Helper, persistent and boot-time WFP filters | Signed MSI containing the official signed Wintun DLL | GNU cross-build passes; MSVC installer and Windows runtime tests unavailable |
 | Linux, x64, systemd and systemd-resolved | Exclusive TUN, nftables protection, marked outer sockets, owned policy table, restricted Unix socket | Compiled installation bundle | musl cross-build passes; dedicated Linux runtime tests unavailable |
-| iOS 17+, arm64 | Network Extension packet tunnel app extension, shared Keychain, on-demand connection | Provisioned IPA | Source implemented; iOS SDK, signing and device tests unavailable |
+| iOS 17+, arm64 | Network Extension packet tunnel app extension, shared Keychain, on-demand connection | Provisioned IPA | Application and extension compile; signing assets and device tests unavailable |
 | Android 10+, arm64 and x64 | VpnService, protected network-bound sockets, Android Keystore, system lockdown | APK | Both Rust libraries, Java/JNI, APK and lint pass; device tests unavailable |
 
 These are implementation targets, not a list of certified releases. Windows ARM, 32-bit Android and other operating systems are not currently packaged.
@@ -42,7 +42,7 @@ On macOS, install the signed PKG and activate the system extension:
 /Applications/Mosaic.app/Contents/MacOS/mosaic-client status
 ```
 
-Approve Mosaic in macOS system settings when requested. An ad-hoc development signature cannot install this Network Extension. This Mac currently has no valid signing identity, matching provisioning profiles or full Xcode installation, so the unsigned build cannot provide a live macOS VPN test.
+Approve Mosaic in macOS system settings when requested. An ad-hoc development signature cannot install this Network Extension. This Mac currently has no valid signing identity or matching provisioning profiles, so the unsigned build cannot provide a live macOS VPN test.
 
 On a dedicated Linux installation, extract the bundle, then run `sudo ./mosaic-client setup --user YOUR_NUMERIC_UID`. The compiled installer installs and starts its system service. Subsequent import, connect, status and disconnect run as that ordinary user. Repeat setup while disconnected to repair or upgrade the owned installation; it verifies the saved binary hashes before replacement. Run `sudo /usr/local/lib/mosaic/mosaic-client uninstall` while disconnected to remove it. Linux requires `ip`, `nft`, `resolvectl`, and `systemctl` in their standard system paths.
 
@@ -71,6 +71,7 @@ These commands are for developers. End users install the resulting package witho
 ```sh
 python3 scripts/package-native.py macos --unsigned --output dist/native/mac-development
 python3 scripts/package-native.py macos --unsigned --target x86_64-apple-darwin --output dist/native/mac-intel-development
+python3 scripts/package-native.py ios --unsigned --output dist/native/ios-development
 python3 scripts/package-native.py linux --output dist/native/linux-package
 python3 scripts/package-native.py windows --identity CERTIFICATE_THUMBPRINT --output dist/native/windows-package
 python3 scripts/package-native.py android --unsigned --sdk ANDROID_SDK_PATH --output dist/native/android-development
@@ -78,7 +79,7 @@ python3 scripts/package-native.py android --unsigned --sdk ANDROID_SDK_PATH --ou
 
 Use a new output directory for each invocation. Install Rust targets before cross-building. Linux packaging expects a native Linux build environment or an explicitly configured cross toolchain. With cargo-zigbuild installed, use `--zig --target x86_64-unknown-linux-musl` for the Linux build from macOS. Windows packaging runs on Windows with the MSVC build tools, Windows SDK `signtool` and WiX CLI. The builder downloads Wintun 0.14.1 from its official distribution, verifies its fixed SHA-256, includes its license and verifies the driver's signature.
 
-Apple release builds require `--team`, `--identity`, `--app-profile` and `--extension-profile`, with bundle identifiers matching `--bundle` and its `.tunnel` extension. macOS also requires `--installer-identity` and `--notary-profile`. For iOS, use `python3 scripts/package-native.py ios` with those Apple signing arguments and a new `--output` directory. Full Xcode and the iPhoneOS SDK are required. App Store, development and ad-hoc provisioning have different device and distribution restrictions; use profiles appropriate to the intended devices.
+Apple release builds require `--team`, `--identity`, `--app-profile` and `--extension-profile`, with bundle identifiers matching `--bundle` and its `.tunnel` extension. macOS also requires `--installer-identity` and `--notary-profile`. For iOS, use `python3 scripts/package-native.py ios` with those Apple signing arguments and a new `--output` directory. Full Xcode and the iPhoneOS SDK are required; if `xcode-select -p` shows Command Line Tools, prefix the command with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. App Store, development and ad-hoc provisioning have different device and distribution restrictions; use profiles appropriate to the intended devices.
 
 Android builds require JDK 17 or newer, Gradle 9.7.1, Android Gradle Plugin 9.4.0, platform SDK 37, build tools 36.0.0, NDK 28.2.13676358, CMake 3.22.1 and Rust `aarch64-linux-android` / `x86_64-linux-android` targets. Native libraries use 16 KiB load alignment. `--unsigned` selects a debug-signed APK for local installation. Release signing takes `--keystore`, `--key-alias`, and the `MOSAIC_STORE_PASSWORD` / `MOSAIC_KEY_PASSWORD` environment variables. Passwords are never placed in command arguments.
 
