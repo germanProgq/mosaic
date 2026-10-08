@@ -87,7 +87,9 @@ sudo ./mosaic-client isolated-down --namespace mosaic-test
 sudo python3 tools/network/baseline.py verify --policy configs/node-baseline.json
 ```
 
-Resolver files are sealed anonymous memory files, bound read-only inside the worker’s private mount namespace. They disappear after the last application and worker exit, including after SIGKILL. Cleanup verifies process start times, namespace and mount identities. It refuses an active launcher, changed resources or a namespace with unrecognized processes. Stop namespace test commands before teardown. Ownership records are private under `/run/mosaic-test`; cleanup never adopts an existing namespace or restores whole-host snapshots. A failed transport exits and removes the namespace; reconnect is not implemented.
+Resolver files are sealed anonymous memory files, bound read-only inside the worker’s private mount namespace. They disappear after the last application and worker exit, including after SIGKILL. Cleanup verifies process start times, namespace and mount identities. It refuses an active launcher, changed resources or a namespace with unrecognized processes. Stop namespace test commands before teardown. Ownership records are private under `/run/mosaic-test`; cleanup never adopts an existing namespace or restores whole-host snapshots. When the relay connection is lost, the worker keeps the namespace and TUN and reconnects. It retries through a duplicate of the same launcher-verified host socket, waiting 1, 2, 4 and then 8 seconds between attempts with jitter. Every new session is freshly authorized, old packet pumps are cancelled, and queued packets are discarded. It stops retrying on credential or configuration errors. Existing application connections may fail; new ones recover.
+
+On a dedicated relay host, where the relay and the test client share one machine, add `--dedicated-host`. The launcher accepts it only when the relay address belongs to this host. In that mode it skips the shared-node VPN guard, whose baseline cannot coexist with the relay's own `mosaic0`, and keeps every namespace isolation check. The client TUN must use a different name from the relay's (for example `mosaic1`). Monitor the host's existing services separately while it runs.
 
 ## Native client
 
@@ -180,7 +182,10 @@ This validates the certificate/key pairing, one-owner tunnel settings and bounde
 - **What it carries:** TCP CONNECT only, with names resolved on the relay. It does not carry UDP, so applications that need UDP (including QUIC/HTTP3) fall back to TCP or bypass the proxy. IPv6 destinations are refused.
 - **What it does not change:** system routes, DNS and firewall rules. Only applications configured to use the proxy are affected.
 - **Relay side:** the relay must run with `--proxy`; the installed service does.
-- **Relay limits:** the relay accepts up to 256 simultaneous proxied connections per session. It refuses port 25, IPv6, private, link-local and loopback ranges, and its own networks.
+- **Relay limits:** the relay accepts up to 256 simultaneous proxied connections per session. It refuses port 25, IPv6, private, link-local and loopback ranges, and its own networks. Proxy traffic is not rate limited.
+- **Relays behind NAT:** when the relay's public IPv4 address is not assigned to one of its interfaces (common on cloud hosts), list it in the relay configuration as `"public_addresses": ["203.0.113.10"]`. The proxy and the tunnel forwarding then refuse it too.
+- **Failures:** a destination refused by policy gets SOCKS reply 2. A relay that does not answer within 20 seconds gets reply 1. Aborted transfers reset the stream instead of closing it cleanly, so applications see the failure.
+- **Datagrams:** a datagram sent on a proxy session ends that session.
 
 To use it as a Shadowrocket node, add a server of type SOCKS5 with address `127.0.0.1` and port `1080`, then select it or route chosen rules to it. Start the proxy with `--interface en0` (or the Mac's active interface) so its connection to the relay does not loop back through Shadowrocket.
 

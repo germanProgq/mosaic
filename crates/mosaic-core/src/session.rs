@@ -22,6 +22,7 @@ pub struct Settings {
     pub control_limit: usize,
     pub queue_packets: usize,
     pub max_mbps: Option<f64>,
+    pub public_addresses: Vec<std::net::Ipv4Addr>,
     pub fetch: Option<crate::config::Fetch>,
     tunnel: Option<std::sync::Arc<tokio::sync::Semaphore>>,
     proxy: bool,
@@ -54,6 +55,7 @@ impl Settings {
             control_limit: c.limits.max_control_bytes,
             queue_packets: c.limits.queue_packets.min(frame::MAX_QUEUE_PACKETS),
             max_mbps: c.limits.max_mbps,
+            public_addresses: c.public_addresses.clone(),
         })
     }
 }
@@ -108,6 +110,18 @@ pub async fn authorize_tunnel(connection: &Connection, c: &ClientConfig) -> Resu
     authorize_mode(connection, c, "tunnel").await
 }
 
+pub async fn authorize_tunnel_with(
+    connection: &Connection,
+    c: &ClientConfig,
+    token: &[u8; 32],
+) -> Result<Ready> {
+    ensure!(
+        c.mode == "isolated_tun" || c.mode == "native_tun",
+        "TUN configuration required"
+    );
+    authorize_with(connection, c, "tunnel", token).await
+}
+
 pub async fn authorize_proxy(connection: &Connection, c: &ClientConfig) -> Result<Ready> {
     authorize_mode(connection, c, "proxy").await
 }
@@ -121,16 +135,31 @@ async fn authorize_mode(
     c: &ClientConfig,
     expected_mode: &str,
 ) -> Result<Ready> {
+    let token = match read_token(&c.auth.token_file) {
+        Ok(token) => token,
+        Err(error) => {
+            connection.close(1u32.into(), b"session rejected");
+            return Err(error);
+        }
+    };
+    authorize_with(connection, c, expected_mode, &token).await
+}
+
+async fn authorize_with(
+    connection: &Connection,
+    c: &ClientConfig,
+    expected_mode: &str,
+    token: &[u8; 32],
+) -> Result<Ready> {
     let work = async {
         let local_limit = send_limit(connection)?;
-        let token = read_token(&c.auth.token_file)?;
         let (mut send, mut recv) = connection.open_bi().await?;
         frame::write_control(
             &mut send,
             &Control::SessionInit {
                 version: frame::VERSION,
                 mode: expected_mode.into(),
-                token: hex(&token),
+                token: hex(token),
                 mtu: frame::MTU,
                 send_limit: local_limit,
             },

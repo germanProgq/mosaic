@@ -158,7 +158,7 @@ async fn main() -> ExitCode {
                                         report.add("relay.fetch_listen", Status::Pass, "Authenticated allowlisted TCP service ready; bounded IPv4 HTTPS forwarding; no TUN egress assertion");
                                     }
                                     if args.tunnel {
-                                        client = Some(c.allowed_client);
+                                        client = Some((c.allowed_client, c.public_addresses.clone()));
                                         tunnel = Some(c.tunnel);
                                         report.check_level = if args.fetch { 4 } else { 3 };
                                         report.scope = if args.fetch { "tunnel-and-fetch-service" } else { "tunnel-service" }.into();
@@ -200,10 +200,10 @@ async fn main() -> ExitCode {
     #[cfg(target_os = "linux")]
     if args.forwarding
         && endpoint.is_some()
-        && let (Some(t), Some(client)) = (tunnel.as_ref(), client)
+        && let (Some(t), Some((client, public))) = (tunnel.as_ref(), client.as_ref())
     {
         let directory = std::path::Path::new("/var/lib/mosaic-relay");
-        match forwarding::Forwarding::up(directory, &t.name, client) {
+        match forwarding::Forwarding::up(directory, &t.name, *client, public) {
             Ok(owned) => {
                 report.add(
                     "relay.forwarding",

@@ -3,7 +3,7 @@ use crate::{
     packet::{self, Address},
     transport::{PacketTransport, checked_size},
 };
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use std::{
     future::Future,
     sync::{
@@ -38,6 +38,17 @@ pub struct Options {
     pub queue_packets: usize,
     pub max_mbps: Option<f64>,
 }
+
+#[derive(Debug)]
+pub struct TunError;
+
+impl std::fmt::Display for TunError {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str("tunnel device failed")
+    }
+}
+
+impl std::error::Error for TunError {}
 
 pub fn valid_rate(max_mbps: f64) -> bool {
     max_mbps.is_finite() && max_mbps > 0.0 && max_mbps <= MAX_RATE_MBPS
@@ -78,7 +89,7 @@ pub async fn run<T: PacketIo, C: PacketTransport>(
         let mut buffer = [0; frame::MTU + 1];
         let mut sequence = 0u64;
         loop {
-            let length = tun.receive(&mut buffer).await?;
+            let length = tun.receive(&mut buffer).await.context(TunError)?;
             ensure!(
                 length > 0 && length <= buffer.len(),
                 "TUN reader stopped or returned invalid length"
@@ -122,7 +133,7 @@ pub async fn run<T: PacketIo, C: PacketTransport>(
     let write_tun = async {
         while let Some(bytes) = in_rx.recv().await {
             pace(bytes.len()).await;
-            tun.send(&bytes).await?;
+            tun.send(&bytes).await.context(TunError)?;
             counters.received.fetch_add(1, Ordering::Relaxed);
         }
         bail!("TUN writer stopped")

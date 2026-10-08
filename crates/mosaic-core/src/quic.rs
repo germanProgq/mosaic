@@ -106,6 +106,14 @@ pub async fn connect_socket(
     c: &ClientConfig,
     socket: std::net::UdpSocket,
 ) -> Result<ClientConnection> {
+    connect_socket_with(c, client_config(c)?, socket).await
+}
+
+pub async fn connect_socket_with(
+    c: &ClientConfig,
+    config: quinn::ClientConfig,
+    socket: std::net::UdpSocket,
+) -> Result<ClientConnection> {
     socket.set_nonblocking(true)?;
     let mut endpoint = Endpoint::new(
         quinn::EndpointConfig::default(),
@@ -113,8 +121,15 @@ pub async fn connect_socket(
         socket,
         Arc::new(quinn::TokioRuntime),
     )?;
-    endpoint.set_default_client_config(client_config(c)?);
+    endpoint.set_default_client_config(config);
     connect_endpoint(c, endpoint).await
+}
+
+impl ClientConnection {
+    pub async fn close_and_wait(self, deadline: Duration) {
+        self.connection.close(0u32.into(), b"reconnecting");
+        let _ = timeout(deadline, self.endpoint.wait_idle()).await;
+    }
 }
 
 async fn connect_endpoint(c: &ClientConfig, endpoint: Endpoint) -> Result<ClientConnection> {
@@ -329,7 +344,12 @@ async fn serve_connection(
         return;
     };
     if ready.mode == "proxy" {
-        crate::proxy::serve(&connection, settings.control_limit).await;
+        crate::proxy::serve(
+            &connection,
+            settings.control_limit,
+            &settings.public_addresses,
+        )
+        .await;
         drop(ready);
         return;
     }

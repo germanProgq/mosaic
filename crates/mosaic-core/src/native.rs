@@ -44,7 +44,15 @@ pub fn retry_delay(attempt: u32, random: u16) -> Duration {
     Duration::from_millis(limit * 4 / 5 + u64::from(random) * (limit / 5) / u64::from(u16::MAX))
 }
 
+pub fn rejected(close: &quinn::ApplicationClose) -> bool {
+    close.error_code == crate::session::SIZE_ERROR.into()
+        || (close.error_code == 1u32.into() && close.reason.as_ref() == b"session rejected")
+}
+
 pub fn retryable(error: &anyhow::Error) -> bool {
+    if error.is::<crate::pump::TunError>() {
+        return false;
+    }
     if let Some(error) = error
         .chain()
         .find_map(|cause| cause.downcast_ref::<quinn::ConnectionError>())
@@ -55,7 +63,7 @@ pub fn retryable(error: &anyhow::Error) -> bool {
                 | quinn::ConnectionError::Reset
                 | quinn::ConnectionError::ConnectionClosed(_)
                 | quinn::ConnectionError::LocallyClosed
-        ) || matches!(error, quinn::ConnectionError::ApplicationClosed(close) if close.error_code == 3u32.into());
+        ) || matches!(error, quinn::ConnectionError::ApplicationClosed(close) if !rejected(close));
     }
     error.is::<tokio::time::error::Elapsed>() || error.is::<std::io::Error>()
 }

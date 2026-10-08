@@ -20,6 +20,7 @@ use tokio::{
 };
 
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(10);
+const OPEN_DEADLINE: Duration = Duration::from_secs(20);
 
 pub struct Relay {
     config: ClientConfig,
@@ -201,15 +202,23 @@ async fn handle(relay: Arc<Relay>, mut client: TcpStream) -> Result<()> {
         Target::Domain(name) => name,
         Target::Ipv4(ip) => ip.to_string(),
     };
-    let streams = match relay.open(&host, port).await {
-        Ok(Some(streams)) => streams,
-        Ok(None) => {
-            reply(&mut client, 5).await?;
+    if proxy::destination(&host, port).is_err() {
+        reply(&mut client, 2).await?;
+        return Ok(());
+    }
+    let streams = match timeout(OPEN_DEADLINE, relay.open(&host, port)).await {
+        Ok(Ok(Some(streams))) => streams,
+        Ok(Ok(None)) => {
+            reply(&mut client, 2).await?;
             return Ok(());
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             reply(&mut client, 1).await?;
             return Err(error);
+        }
+        Err(_) => {
+            reply(&mut client, 1).await?;
+            bail!("relay did not open the connection in time");
         }
     };
     reply(&mut client, 0).await?;
@@ -233,8 +242,12 @@ async fn splice(
         write.shutdown().await?;
         Ok::<(), anyhow::Error>(())
     };
-    tokio::try_join!(upload, download)?;
-    Ok(())
+    let result = tokio::try_join!(upload, download).map(|_| ());
+    if result.is_err() {
+        let _ = send.reset(1u32.into());
+        let _ = recv.stop(1u32.into());
+    }
+    result
 }
 
 async fn shutdown() {
@@ -274,12 +287,21 @@ async fn serve(config: &Path, listen: SocketAddr, interface: Option<String>) -> 
         &format!("SOCKS5 proxy ready on {listen}; TCP through the relay; stop with Ctrl-C"),
     );
     report.emit(None)?;
+    let slots = Arc::new(tokio::sync::Semaphore::new(proxy::MAX_STREAMS as usize));
     let accept = async {
         loop {
-            let (client, _) = listener.accept().await?;
+            let slot = slots.clone().acquire_owned().await?;
+            let client = match listener.accept().await {
+                Ok((client, _)) => client,
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
             let relay = relay.clone();
             tokio::spawn(async move {
                 let _ = handle(relay, client).await;
+                drop(slot);
             });
         }
         #[allow(unreachable_code)]

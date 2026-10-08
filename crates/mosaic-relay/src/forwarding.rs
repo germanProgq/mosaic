@@ -193,7 +193,7 @@ pub fn recover(directory: &Path) -> Result<()> {
 }
 
 impl Forwarding {
-    pub fn up(directory: &Path, tun: &str, client: Ipv4Addr) -> Result<Self> {
+    pub fn up(directory: &Path, tun: &str, client: Ipv4Addr, public: &[Ipv4Addr]) -> Result<Self> {
         ensure!(
             rules::interface(tun) && tun.starts_with("mosaic"),
             "invalid relay tunnel name"
@@ -210,7 +210,10 @@ impl Forwarding {
         );
         let wan = wan()?;
         ensure!(wan != tun, "relay default route uses the tunnel");
-        let networks = local_networks(&wan)?;
+        let mut networks = local_networks(&wan)?;
+        networks.extend(public.iter().map(|ip| format!("{ip}/32")));
+        networks.sort();
+        networks.dedup();
         let targets = rules::targets(&items)?;
         let previous = std::fs::read_to_string(FORWARDING)?.trim().to_string();
         let script = rules::rules(&Plan {

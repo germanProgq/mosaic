@@ -189,9 +189,9 @@ fn main() -> ExitCode {
             uid,
         } => match netns_launcher::worker(&config, fd, cookie, uid) {
             Ok(()) => ExitCode::SUCCESS,
-            Err(_) => {
+            Err(error) => {
                 eprintln!(
-                    "FAIL isolation.worker: namespace, inherited socket, authentication or packet pump failed"
+                    "FAIL isolation.worker: namespace, inherited socket, authentication or packet pump failed: {error:#}"
                 );
                 ExitCode::from(1)
             }

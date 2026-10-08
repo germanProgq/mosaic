@@ -112,8 +112,12 @@ pub async fn splice(
         send.finish()?;
         Ok::<(), anyhow::Error>(())
     };
-    tokio::try_join!(upload, download)?;
-    Ok(())
+    let result = tokio::try_join!(upload, download).map(|_| ());
+    if result.is_err() {
+        let _ = send.reset(1u32.into());
+        let _ = recv.stop(1u32.into());
+    }
+    result
 }
 
 async fn stream(
@@ -158,9 +162,11 @@ async fn stream(
     let _ = splice(send, recv, tcp).await;
 }
 
-pub async fn serve(connection: &quinn::Connection, control_limit: usize) {
+pub async fn serve(connection: &quinn::Connection, control_limit: usize, public: &[Ipv4Addr]) {
     connection.set_max_concurrent_bi_streams(MAX_STREAMS.into());
-    let local = Arc::new(local_networks());
+    let mut networks = local_networks();
+    networks.extend(public.iter().map(|ip| (u32::from(*ip), u32::MAX)));
+    let local = Arc::new(networks);
     let mut tasks = JoinSet::new();
     loop {
         tokio::select! {

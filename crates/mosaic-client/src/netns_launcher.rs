@@ -163,6 +163,8 @@ mod linux {
         socket_port: Option<u16>,
         socket_uid: u32,
         socket_cookie: Option<u64>,
+        #[serde(default)]
+        dedicated_host: bool,
     }
 
     fn process(pid: u32) -> Result<Process> {
@@ -289,6 +291,18 @@ mod linux {
             policy["tunnel_subnet"].as_str() == Some(&subnet),
             "policy subnet must match TUN"
         );
+        if options.dedicated_host {
+            let relay = match c.server.address.ip() {
+                std::net::IpAddr::V4(ip) => u32::from(ip),
+                std::net::IpAddr::V6(_) => 0,
+            };
+            ensure!(
+                mosaic_core::proxy::local_networks()
+                    .iter()
+                    .any(|(address, _)| *address == relay),
+                "dedicated host mode requires the relay to run on this host"
+            );
+        }
         let (directory, mount) = paths(&isolation.namespace)?;
         ensure!(
             !mount.try_exists()? && !directory.try_exists()?,
@@ -306,20 +320,9 @@ mod linux {
             socket_port: None,
             socket_uid: uid,
             socket_cookie: None,
+            dedicated_host: options.dedicated_host,
         };
         save(&directory, &owner)?;
-        if options.dedicated_host {
-            let relay = match c.server.address.ip() {
-                std::net::IpAddr::V4(ip) => u32::from(ip),
-                std::net::IpAddr::V6(_) => 0,
-            };
-            ensure!(
-                mosaic_core::proxy::local_networks()
-                    .iter()
-                    .any(|(address, _)| *address == relay),
-                "dedicated host mode requires the relay to run on this host"
-            );
-        }
         let mut child: Option<Child> = None;
         let mut guard: Option<Child> = None;
         let mut socket = None;
@@ -656,10 +659,11 @@ mod linux {
             "namespace routing is not ready"
         );
         ensure!(
-            fs::metadata(directory.join("guard.ready"))?
-                .modified()?
-                .elapsed()?
-                < Duration::from_secs(10),
+            owner.dedicated_host
+                || fs::metadata(directory.join("guard.ready"))?
+                    .modified()?
+                    .elapsed()?
+                    < Duration::from_secs(10),
             "VPN preservation guard is not current"
         );
         let net = File::open(format!("/proc/{}/ns/net", worker.pid))?;
@@ -724,13 +728,17 @@ mod linux {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+        let tls = quic::client_config(&c)?;
+        let token = mosaic_core::config::read_token(&c.auth.token_file)?;
         let connect = |socket: UdpSocket| {
             let c = &c;
+            let tls = tls.clone();
+            let token = &token;
             async move {
-                let client = quic::connect_socket(c, socket)
+                let client = quic::connect_socket_with(c, tls, socket)
                     .await
                     .context("inherited UDP QUIC connection failed")?;
-                let ready = session::authorize_tunnel(&client.connection, c)
+                let ready = session::authorize_tunnel_with(&client.connection, c, token)
                     .await
                     .context("tunnel authorization failed")?;
                 Ok::<_, anyhow::Error>((client, ready))
@@ -778,7 +786,7 @@ mod linux {
                     break Err(error);
                 }
                 drop(ready);
-                drop(client);
+                client.close_and_wait(Duration::from_secs(2)).await;
                 eprintln!("tunnel reconnecting; namespace and TUN retained");
                 let mut attempt = 0u32;
                 loop {

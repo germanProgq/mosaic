@@ -2,6 +2,28 @@
 
 These historical records cover diagnostic and isolated Linux behavior only. They do not establish macOS or Windows full-device VPN support. [The corrections](../../fixes.md) and [acceptance manifest](../../tests/manifest.json) require separate installed-package evidence for both desktop clients and compiled relay setup and cleanup. Those deliverables remain BLOCKED; the original PASS and FAIL results below retain their recorded scope.
 
+## Plan phases on the relay host
+
+October 8, 2026: **phases 4 to 9 passed live on 203.0.113.76** with the isolated client (`--dedicated-host`, TUN `mosaic1`, test UID `nobody`). Client and relay shared one host, so these results do not measure a remote network path.
+
+- **Isolation:** the namespace contained only `lo` and `mosaic1`, with a default route through the TUN.
+- **Egress:** 10/10 HTTPS requests left with the relay's address.
+- **DNS:** 10/10 lookups through the private resolver, and a capture on the relay TUN showed the queries to 1.1.1.1.
+- **Packet size:** a 1100-byte don't-fragment ping returned 20/20. At 1101 bytes the ping failed with "Message too long".
+- **IPv6:** an external IPv6 fetch failed, as required.
+- **UDP:** echo through the tunnel returned 100/100 at 1, 64, 512, 1000 and 1072 bytes. A fragmented 1400-byte datagram reassembled 20/20. The temporary echo firewall rule was removed afterwards.
+- **Reconnect:** three 20-second relay stops recovered in 5.7, 5.2 and 5.2 seconds. No request succeeded during the outages.
+  - The first attempt failed: a gracefully stopped relay closes with code 0, which the client wrongly treated as permanent.
+  - It now retries every close except an authorization or packet-size rejection. The local outage test uses the real shutdown code.
+- **Worker kill:** SIGKILL of the worker ended the launcher, and cleanup removed the namespace and ownership records.
+- **Regression:** `test --all --max-mbps 1` passed twice, 25/25 assertions each.
+- **Soak:** 360/360 DNS and HTTPS cycles over 1795 seconds. Worker memory stayed at 7.9 MB and open descriptors at 12.
+- **Capped download:** 2 MB at about 0.8 Mbit/s, within the test client's 1 Mbit/s cap.
+- **Version pairings:** the refactored client worked with the earlier relay, and the earlier client's session, stream and datagram checks worked with the upgraded relay.
+- **Linux 7.0 resolver:** this kernel refuses bind mounts of memfd files, so the private resolver files now fall back to a detached tmpfs inside the worker's private mount namespace.
+- **Xray health:** 1440 representative five-second samples had no failures, and the process never changed. The final median was 256 ms against a 234 ms baseline, within the 20% limit.
+- **Cleanup:** all temporary files were removed from the relay afterwards. The relay service stayed installed.
+
 ## Local proxy
 
 October 8, 2026: **proxy mode passed on the relay host; the Mac proxy was built but not run.**

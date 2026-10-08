@@ -196,3 +196,43 @@ async fn opened_streams_end_tunnel_mode() {
         .unwrap();
     assert!(result.is_err());
 }
+
+#[test]
+fn tunnel_device_failures_are_not_retried() {
+    use anyhow::Context;
+    let device: anyhow::Result<()> =
+        Err(std::io::Error::other("device gone")).context(pump::TunError);
+    assert!(!mosaic_core::native::retryable(&device.unwrap_err()));
+    let socket = anyhow::Error::new(std::io::Error::other("network unreachable"));
+    assert!(mosaic_core::native::retryable(&socket));
+}
+
+#[test]
+fn relay_shutdown_is_retried_but_rejection_is_not() {
+    let closed = |code: u32, reason: &'static [u8]| {
+        anyhow::Error::new(quinn::ConnectionError::ApplicationClosed(
+            quinn::ApplicationClose {
+                error_code: code.into(),
+                reason: reason.into(),
+            },
+        ))
+    };
+    assert!(mosaic_core::native::retryable(&closed(
+        0,
+        b"echo relay shutdown"
+    )));
+    assert!(mosaic_core::native::retryable(&closed(0, b"tunnel ended")));
+    assert!(mosaic_core::native::retryable(&closed(
+        3,
+        b"tunnel already owned"
+    )));
+    assert!(mosaic_core::native::retryable(&closed(
+        1,
+        b"tunnel stopped"
+    )));
+    assert!(!mosaic_core::native::retryable(&closed(
+        1,
+        b"session rejected"
+    )));
+    assert!(!mosaic_core::native::retryable(&closed(2, b"size")));
+}

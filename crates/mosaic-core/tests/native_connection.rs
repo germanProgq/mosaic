@@ -297,7 +297,7 @@ async fn three_twenty_second_outages_recover_with_fresh_authorization() {
     });
     wait_state(&mut current, State::Connected).await;
     for _ in 0..3 {
-        endpoint.close(3u32.into(), b"fixture outage");
+        endpoint.close(0u32.into(), b"echo relay shutdown");
         server.abort();
         let _ = server.await;
         drop(endpoint);

@@ -118,6 +118,8 @@ pub struct RelayConfig {
     pub allowed_client: Ipv4Addr,
     pub tunnel_owners: u8,
     pub fetch: Fetch,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub public_addresses: Vec<Ipv4Addr>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -433,6 +435,13 @@ impl RelayConfig {
             "relay requires an IPv4 listen address and nonzero port"
         );
         tunnel(&c.tunnel)?;
+        ensure!(
+            c.public_addresses.len() <= 8
+                && c.public_addresses
+                    .iter()
+                    .all(|ip| !ip.is_unspecified() && !ip.is_multicast()),
+            "relay public addresses must list at most eight unicast IPv4 addresses"
+        );
         ensure!(
             c.allowed_client == c.tunnel.peer && c.tunnel_owners == 1,
             "relay requires one tunnel owner matching its peer"

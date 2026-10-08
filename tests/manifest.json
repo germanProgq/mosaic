@@ -218,8 +218,8 @@
       "reason": "Native Wintun, routing, DNS, persistent WFP protection and restricted service are implemented; the GNU cross-build passes. MSVC MSI build and installed Windows acceptance are unavailable."
     },
     "relay": {
-      "status": "BLOCKED",
-      "reason": "Compiled relay setup, owned forwarding, restart, kill recovery, uninstall and reinstall passed live on the relay host with Xray preserved. Tunnel egress from a separate client is still untested."
+      "status": "PASS",
+      "reason": "Compiled setup, owned forwarding, restart, kill recovery, uninstall, reinstall and upgrade passed live on 203.0.113.76. Tunnel egress, DNS, MTU, UDP, IPv6 blocking, three outages, kill cleanup and a 360-cycle soak passed from an isolated client on the same host, with Xray preserved (1440 samples)."
     },
     "required_report_fields": [
       "source_revision",
@@ -278,7 +278,7 @@
     },
     "linux": {
       "status": "BLOCKED",
-      "reason": "Compiled host TUN, nftables, resolved and systemd integration cross-builds. Dedicated host networking, setup recovery and cleanup acceptance are unavailable."
+      "reason": "Isolated namespace client passed live phases 3-9 on the relay host. Host-mode systemd client acceptance on a dedicated Linux machine is still unavailable; the test node is unreachable."
     },
     "ios": {
       "status": "BLOCKED",

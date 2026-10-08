@@ -50,7 +50,68 @@ mod system {
         Ok(())
     }
 
+    fn read_only(target: &str) -> Result<()> {
+        mount(
+            None,
+            target,
+            libc::MS_BIND
+                | libc::MS_REMOUNT
+                | libc::MS_RDONLY
+                | libc::MS_NOSUID
+                | libc::MS_NODEV
+                | libc::MS_NOEXEC,
+        )
+    }
+
+    fn staged(target: &str, contents: &str) -> Result<()> {
+        let staging = ["/mnt", "/media", "/srv"]
+            .into_iter()
+            .find(|path| fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()))
+            .context("no directory available for private resolver staging")?;
+        let source = CString::new("tmpfs")?;
+        let point = CString::new(staging)?;
+        let options = CString::new("size=64k,mode=0755")?;
+        check(unsafe {
+            libc::mount(
+                source.as_ptr(),
+                point.as_ptr(),
+                source.as_ptr(),
+                libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC,
+                options.as_ptr().cast(),
+            )
+        })
+        .context("private resolver staging mount failed")?;
+        let result = (|| {
+            let path = Path::new(staging).join("resolver");
+            fs::write(&path, contents)?;
+            fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o444))?;
+            mount(
+                Some(path.to_str().context("invalid staging path")?),
+                target,
+                libc::MS_BIND,
+            )?;
+            read_only(target)
+        })();
+        check(unsafe { libc::umount2(point.as_ptr(), libc::MNT_DETACH) })
+            .context("private resolver staging cleanup failed")?;
+        result
+    }
+
     fn file(target: &str, contents: &str) -> Result<()> {
+        match sealed(target, contents) {
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .and_then(std::io::Error::raw_os_error)
+                    == Some(libc::EINVAL) =>
+            {
+                staged(target, contents)
+            }
+            other => other,
+        }
+    }
+
+    fn sealed(target: &str, contents: &str) -> Result<()> {
         let name = CString::new("mosaic-resolver")?;
         let fd = unsafe {
             libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING)
@@ -71,17 +132,7 @@ mod system {
             target,
             libc::MS_BIND,
         )?;
-        mount(
-            None,
-            target,
-            libc::MS_BIND
-                | libc::MS_REMOUNT
-                | libc::MS_RDONLY
-                | libc::MS_NOSUID
-                | libc::MS_NODEV
-                | libc::MS_NOEXEC,
-        )?;
-        Ok(())
+        read_only(target)
     }
 
     pub fn private_dns() -> Result<()> {
