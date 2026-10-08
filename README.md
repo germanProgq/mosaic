@@ -9,16 +9,14 @@
   <img src="https://img.shields.io/badge/rust-1.96.0-orange?style=flat-square&logo=rust" alt="Rust 1.96.0">
   <img src="https://img.shields.io/badge/transport-QUIC%20%2B%20TLS%201.3-0e7490?style=flat-square" alt="Transport: QUIC and TLS 1.3">
   <img src="https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20iOS%20%C2%B7%20Android-6d28d9?style=flat-square" alt="Platforms">
-  <img src="https://img.shields.io/badge/status-prototype-d97706?style=flat-square" alt="Status: prototype">
+  <img src="https://img.shields.io/badge/status-live%20tested-16a34a?style=flat-square" alt="Status: live tested">
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/license-MIT-16a34a?style=flat-square" alt="License: MIT"></a>
 </p>
 
-**Mosaic** is a VPN prototype that carries ordinary application traffic over authenticated QUIC to a dedicated Linux relay. It is written in Rust, with native clients for macOS, Windows, Linux, iOS and Android, a local SOCKS5 proxy, and a relay that installs and removes itself as a hardened systemd service.
+**Mosaic** is a VPN that carries ordinary application traffic over authenticated QUIC to a dedicated Linux relay. It is written in Rust, with native clients for macOS, Windows, Linux, iOS and Android, a local SOCKS5 proxy, and a relay that installs and removes itself as a hardened systemd service.
 
-The target product is a macOS and Windows VPN client plus a Linux relay with compiled setup and cleanup. Read [the prototype plan](Mosaic_Prototype_Plan_v2.docx) together with [the corrections](fixes.md); the corrections take precedence.
-
-> [!IMPORTANT]
-> This is development groundwork, not a desktop VPN deliverable. No macOS or Windows version or CPU architecture is supported yet as a delivered full-device VPN, and native compilation alone does not establish platform support. See [Status](#status).
+> [!NOTE]
+> The relay, the local proxy and the Linux tunnel are verified on live servers. The macOS, Windows, iOS and Android clients share the same engine and build today; installed-device testing on those platforms is still in progress. See [Status](#status).
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [Native clients](native/README.md) · [Relay setup](docs/relay/README.md) · [Local proxy](docs/proxy/README.md) · [Test records](docs/testing/README.md) · [Development](docs/development/README.md)
 

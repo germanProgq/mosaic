@@ -65,7 +65,7 @@ All cases authenticate on a fresh connection.
 ### Authentication
 
 - **Deadlines:** the TLS handshake and session exchange each have a five-second deadline.
-- **TLS:** certificate trust, SAN and prototype ALPN `mosaic-poc/2` are verified. 0-RTT and TLS resumption are disabled.
+- **TLS:** certificate trust, SAN and ALPN `mosaic-poc/2` are verified. 0-RTT and TLS resumption are disabled.
 - **Token:** the relay decodes exactly 32 token bytes and compares them with `subtle::ConstantTimeEq`. Tokens appear only inside encrypted application data and never in reports.
 - **Control messages:** a four-byte big-endian length and typed JSON bounded by the configured limit, at most 4096 bytes. Unknown fields, invalid lengths, unsupported versions or modes, early data and mismatched readiness values close the connection.
 - **Session identifier:** a TLS exporter supplies a connection-bound identifier.
