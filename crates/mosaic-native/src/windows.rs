@@ -50,6 +50,10 @@ impl Network {
         config.validate()?;
         config.check_credentials()?;
         ensure!(config.mode == "native_tun", "native configuration required");
+        ensure!(
+            config.exceptions.is_none(),
+            "traffic exceptions are supported only by the Linux host client"
+        );
         wfp::apply(config, 0, recovering)?;
         let dll = std::env::current_exe()?
             .parent()

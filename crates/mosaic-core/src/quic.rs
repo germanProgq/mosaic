@@ -32,11 +32,12 @@ fn transport(c: &Transport, server: bool) -> Arc<TransportConfig> {
     .keep_alive_interval(Some(Duration::from_secs(c.keepalive_s)))
     .max_concurrent_bidi_streams(if server { 3u32 } else { 0u32 }.into())
     .max_concurrent_uni_streams(0u32.into())
-    .stream_receive_window((MAX_ECHO_BYTES as u32 + 1).into())
-    .receive_window((256u32 * 1024).into())
-    .send_window(256 * 1024)
+    .stream_receive_window((2u32 * 1024 * 1024).into())
+    .receive_window((16u32 * 1024 * 1024).into())
+    .send_window(16 * 1024 * 1024)
     .datagram_receive_buffer_size(Some(frame::DATAGRAM_BUFFER_BYTES))
-    .datagram_send_buffer_size(frame::DATAGRAM_BUFFER_BYTES);
+    .datagram_send_buffer_size(frame::DATAGRAM_SEND_BUFFER_BYTES)
+    .congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     Arc::new(t)
 }
 
@@ -327,6 +328,11 @@ async fn serve_connection(
     let Ok(ready) = session::accept(&connection, &settings).await else {
         return;
     };
+    if ready.mode == "proxy" {
+        crate::proxy::serve(&connection, settings.control_limit).await;
+        drop(ready);
+        return;
+    }
     if ready.mode == "fetch" {
         if let Some(fetch) = &settings.fetch {
             crate::tcp_connect::serve(&connection, fetch, settings.control_limit, fetch_pacer)
@@ -355,7 +361,7 @@ async fn serve_connection(
                                 outbound: crate::packet::Address::Destination(config.peer),
                                 inbound: crate::packet::Address::Source(config.peer),
                                 queue_packets: settings.queue_packets,
-                                max_mbps: 1.0,
+                                max_mbps: settings.max_mbps,
                             },
                             counters.clone(),
                         )
@@ -385,7 +391,8 @@ async fn serve_connection(
         return;
     }
     let mut packets = JoinSet::new();
-    let (tx, mut rx) = mpsc::channel(settings.queue_packets);
+    let (tx, mut rx) =
+        mpsc::channel::<Vec<u8>>(settings.queue_packets.min(frame::DIAGNOSTIC_QUEUE_PACKETS));
     let reader = connection.clone();
     packets.spawn(async move {
         loop {
@@ -394,7 +401,7 @@ async fn serve_connection(
                 Err(error) => return Err::<(), anyhow::Error>(error.into()),
             };
             frame::read_packet(&bytes)?;
-            match tx.try_send(bytes) {
+            match tx.try_send(bytes.to_vec()) {
                 Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
                 Err(mpsc::error::TrySendError::Closed(_)) => anyhow::bail!("packet sender stopped"),
             }
@@ -408,7 +415,7 @@ async fn serve_connection(
                 pacer.wait(bytes.len()).await;
             }
             session::send_limit(&writer)?;
-            writer.send_datagram_wait(bytes).await?;
+            writer.send_datagram_wait(bytes.into()).await?;
         }
         Ok::<(), anyhow::Error>(())
     });

@@ -220,7 +220,7 @@ async fn packet_pumps_are_independent_reject_bad_input_and_cancel() {
                     outbound: Address::Source(ip()),
                     inbound: Address::Source(ip()),
                     queue_packets: 2,
-                    max_mbps: 1.0,
+                    max_mbps: Some(1.0),
                 },
                 counters,
             )
@@ -344,7 +344,7 @@ fn linux_namespace_socket_and_tun_ping() {
                         outbound: Address::Source(ip()),
                         inbound: Address::Destination(ip()),
                         queue_packets: 4,
-                        max_mbps: 1.0,
+                        max_mbps: Some(1.0),
                     },
                     counters.clone(),
                 );

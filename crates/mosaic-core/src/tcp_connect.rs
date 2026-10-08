@@ -27,6 +27,7 @@ pub enum Request {
 pub enum Response {
     TcpReady { max_bytes: u64, timeout_s: u64 },
     TcpRejected,
+    ProxyReady,
 }
 
 pub fn public_ipv4(ip: Ipv4Addr) -> bool {

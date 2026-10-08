@@ -59,7 +59,7 @@ impl Tun {
                 "mtu",
                 "1100",
                 "txqueuelen",
-                "256",
+                "1000",
             ],
         )?;
         linux::command("ip", &["addr", "add", &c.address, "dev", &c.name])?;

@@ -27,6 +27,14 @@ pub struct ClientConfig {
     pub tunnel: Option<Tunnel>,
     pub dns: Option<Dns>,
     pub test_limits: Option<TestLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exceptions: Option<Exceptions>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Exceptions {
+    pub inbound_replies: bool,
+    pub services: Vec<String>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +72,8 @@ pub struct Network {
 pub struct Limits {
     pub max_control_bytes: usize,
     pub queue_packets: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mbps: Option<f64>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -218,6 +228,34 @@ fn dns_name(s: &str) -> bool {
                 && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
         })
 }
+pub fn service_name(s: &str) -> bool {
+    s.len() <= 64
+        && s.strip_suffix(".service").is_some_and(|stem| {
+            !stem.is_empty()
+                && !stem.starts_with(['-', '.'])
+                && stem
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        })
+}
+fn exceptions(e: &Exceptions) -> Result<()> {
+    ensure!(
+        e.inbound_replies || !e.services.is_empty(),
+        "traffic exceptions must allow inbound replies or name a service"
+    );
+    ensure!(
+        e.services.len() <= 8 && e.services.iter().all(|s| service_name(s)),
+        "traffic exceptions allow at most eight systemd service names"
+    );
+    let mut names = e.services.clone();
+    names.sort();
+    names.dedup();
+    ensure!(
+        names.len() == e.services.len(),
+        "traffic exception services must be unique"
+    );
+    Ok(())
+}
 fn common(version: u8, kind: &str, t: &Transport, l: &Limits) -> Result<()> {
     ensure!(
         version == 2 && kind == "mosaic",
@@ -228,12 +266,19 @@ fn common(version: u8, kind: &str, t: &Transport, l: &Limits) -> Result<()> {
         "expected QUIC with prototype ALPN mosaic-poc/2"
     );
     ensure!(
-        t.idle_timeout_s == 15 && t.keepalive_s > 0 && t.keepalive_s <= 5,
-        "idle timeout must be 15 seconds and keepalive 1..5 seconds"
+        (4..=15).contains(&t.idle_timeout_s)
+            && (1..=5).contains(&t.keepalive_s)
+            && t.keepalive_s * 2 <= t.idle_timeout_s,
+        "idle timeout must be 4..15 seconds and at least twice the 1..5 second keepalive"
     );
     ensure!(
-        (1..=4096).contains(&l.max_control_bytes) && (1..=256).contains(&l.queue_packets),
-        "control/queue limits exceed prototype bounds"
+        (1..=crate::frame::MAX_CONTROL_BYTES).contains(&l.max_control_bytes)
+            && (1..=crate::frame::MAX_QUEUE_PACKETS).contains(&l.queue_packets),
+        "control/queue limits exceed supported bounds"
+    );
+    ensure!(
+        l.max_mbps.is_none_or(crate::pump::valid_rate),
+        "tunnel rate limit must be a positive number of Mbit/s"
     );
     Ok(())
 }
@@ -292,12 +337,19 @@ impl ClientConfig {
             dns_name(&self.server.name),
             "server name must be a DNS certificate name"
         );
+        ensure!(
+            self.exceptions.is_none() || self.mode == "native_tun",
+            "traffic exceptions apply only to native TUN mode"
+        );
         match self.mode.as_str() {
             "native_tun" => {
                 ensure!(
                     self.isolation.is_none() && self.test_limits.is_none(),
                     "native mode must not contain shared-node isolation settings"
                 );
+                if let Some(e) = &self.exceptions {
+                    exceptions(e)?;
+                }
                 ensure!(
                     self.server.address.is_ipv4(),
                     "native mode currently requires an IPv4 relay"

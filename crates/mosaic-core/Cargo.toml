@@ -51,3 +51,15 @@ path = "tests/net/dns.rs"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
+[[test]]
+name = "net_mtu"
+path = "tests/net/mtu.rs"
+
+[[test]]
+name = "net_udp"
+path = "tests/net/udp.rs"
+
+[[test]]
+name = "net_ipv6"
+path = "tests/net/ipv6.rs"

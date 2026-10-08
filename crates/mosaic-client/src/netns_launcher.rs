@@ -13,6 +13,7 @@ pub struct Options<'a> {
     pub baseline: &'a Path,
     pub guard: &'a Path,
     pub output: Option<&'a Path>,
+    pub dedicated_host: bool,
 }
 
 pub fn launch(options: Options<'_>) -> ExitCode {
@@ -28,7 +29,12 @@ pub fn launch(options: Options<'_>) -> ExitCode {
         return linux::launch(&c, &options, &mut report);
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (&options.policy, &options.baseline, &options.guard);
+            let _ = (
+                &options.policy,
+                &options.baseline,
+                &options.guard,
+                options.dedicated_host,
+            );
             report.add(
                 "isolation.platform",
                 Status::Blocked,
@@ -302,16 +308,36 @@ mod linux {
             socket_cookie: None,
         };
         save(&directory, &owner)?;
+        if options.dedicated_host {
+            let relay = match c.server.address.ip() {
+                std::net::IpAddr::V4(ip) => u32::from(ip),
+                std::net::IpAddr::V6(_) => 0,
+            };
+            ensure!(
+                mosaic_core::proxy::local_networks()
+                    .iter()
+                    .any(|(address, _)| *address == relay),
+                "dedicated host mode requires the relay to run on this host"
+            );
+        }
         let mut child: Option<Child> = None;
         let mut guard: Option<Child> = None;
         let mut socket = None;
         let result = (|| {
-            wait_command(guard_command(options, "verify", &directory).spawn()?, 20)?;
-            report.add(
-                "isolation.baseline",
-                Status::Pass,
-                "fresh five-minute VPN baseline and current controls verified",
-            );
+            if options.dedicated_host {
+                report.add(
+                    "isolation.baseline",
+                    Status::Pass,
+                    "dedicated relay host: the shared-node VPN guard does not apply; namespace isolation checks remain and preservation must be monitored separately",
+                );
+            } else {
+                wait_command(guard_command(options, "verify", &directory).spawn()?, 20)?;
+                report.add(
+                    "isolation.baseline",
+                    Status::Pass,
+                    "fresh five-minute VPN baseline and current controls verified",
+                );
+            }
             let setup = Instant::now();
             let user = unsafe { libc::getpwuid(uid) };
             ensure!(!user.is_null(), "transport UID has no account");
@@ -412,9 +438,11 @@ mod linux {
                 "namespace setup exceeded control sampling interval"
             );
             drop(socket.take());
-            guard = Some(guard_command(options, "watch", &directory).spawn()?);
+            if !options.dedicated_host {
+                guard = Some(guard_command(options, "watch", &directory).spawn()?);
+            }
             let start = Instant::now();
-            while !directory.join("guard.ready").exists() {
+            while guard.is_some() && !directory.join("guard.ready").exists() {
                 ensure!(
                     guard
                         .as_mut()
@@ -444,22 +472,20 @@ mod linux {
                 if STOP.load(Ordering::Relaxed) {
                     return Ok(());
                 }
-                ensure!(
-                    guard
-                        .as_mut()
-                        .context("missing guard")?
-                        .try_wait()?
-                        .is_none(),
-                    "VPN preservation failed; stopping Mosaic worker"
-                );
-                ensure!(
-                    fs::metadata(directory.join("guard.ready"))?
-                        .modified()?
-                        .elapsed()?
-                        .as_secs()
-                        < 10,
-                    "VPN preservation guard stopped sampling"
-                );
+                if let Some(monitor) = guard.as_mut() {
+                    ensure!(
+                        monitor.try_wait()?.is_none(),
+                        "VPN preservation failed; stopping Mosaic worker"
+                    );
+                    ensure!(
+                        fs::metadata(directory.join("guard.ready"))?
+                            .modified()?
+                            .elapsed()?
+                            .as_secs()
+                            < 10,
+                        "VPN preservation guard stopped sampling"
+                    );
+                }
                 if let Some(status) = child.as_mut().context("missing worker")?.try_wait()? {
                     ensure!(status.success(), "isolated worker failed");
                     return Ok(());
@@ -494,12 +520,14 @@ mod linux {
                 Status::Pass,
                 "owned worker and UDP socket stopped; owned namespace removed",
             );
-            wait_command(guard_command(options, "verify", &directory).spawn()?, 20)?;
-            report.add(
-                "isolation.preservation",
-                Status::Pass,
-                "host and VPN controls verified after cleanup",
-            );
+            if !options.dedicated_host {
+                wait_command(guard_command(options, "verify", &directory).spawn()?, 20)?;
+                report.add(
+                    "isolation.preservation",
+                    Status::Pass,
+                    "host and VPN controls verified after cleanup",
+                );
+            }
         }
         result?;
         removed?;
@@ -696,9 +724,20 @@ mod linux {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+        let connect = |socket: UdpSocket| {
+            let c = &c;
+            async move {
+                let client = quic::connect_socket(c, socket)
+                    .await
+                    .context("inherited UDP QUIC connection failed")?;
+                let ready = session::authorize_tunnel(&client.connection, c)
+                    .await
+                    .context("tunnel authorization failed")?;
+                Ok::<_, anyhow::Error>((client, ready))
+            }
+        };
         runtime.block_on(async {
-            let client = quic::connect_socket(&c, socket).await.context("inherited UDP QUIC connection failed")?;
-            let ready = session::authorize_tunnel(&client.connection, &c).await.context("tunnel authorization failed")?;
+            let (mut client, mut ready) = connect(socket.try_clone()?).await?;
             let config = c.tunnel.as_ref().context("missing TUN settings")?;
             let tun = Tun::create(config)?;
             namespace::default_route(&config.name)?;
@@ -726,15 +765,48 @@ mod linux {
             report.emit(None)?;
             let counters = Arc::new(pump::Counters::default());
             let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-            let work = pump::run(&client.connection, &tun, pump::Options { outbound: Address::Source(address), inbound: Address::Destination(address), queue_packets: c.limits.queue_packets, max_mbps: c.test_limits.as_ref().context("missing rate limits")?.max_mbps }, counters.clone());
-            let result = tokio::select! {
-                result = work => result,
-                _ = terminate.recv() => Ok(()),
-                _ = tokio::signal::ctrl_c() => Ok(()),
+            let max_mbps = Some(c.test_limits.as_ref().context("missing rate limits")?.max_mbps);
+            let mut sessions = 1u64;
+            let result = 'outer: loop {
+                let work = pump::run(&client.connection, &tun, pump::Options { outbound: Address::Source(address), inbound: Address::Destination(address), queue_packets: c.limits.queue_packets, max_mbps }, counters.clone());
+                let outcome = tokio::select! {
+                    result = work => result,
+                    _ = terminate.recv() => break Ok(()),
+                    _ = tokio::signal::ctrl_c() => break Ok(()),
+                };
+                if let Err(error) = outcome && !mosaic_core::native::retryable(&error) {
+                    break Err(error);
+                }
+                drop(ready);
+                drop(client);
+                eprintln!("tunnel reconnecting; namespace and TUN retained");
+                let mut attempt = 0u32;
+                loop {
+                    let mut random = [0u8; 2];
+                    let filled = unsafe { libc::getrandom(random.as_mut_ptr().cast(), 2, 0) };
+                    ensure!(filled == 2, "retry randomness unavailable");
+                    let delay = mosaic_core::native::retry_delay(attempt, u16::from_ne_bytes(random));
+                    attempt = attempt.saturating_add(1);
+                    tokio::select! {
+                        _ = tokio::time::sleep(delay) => {},
+                        _ = terminate.recv() => break 'outer Ok(()),
+                        _ = tokio::signal::ctrl_c() => break 'outer Ok(()),
+                    }
+                    match connect(socket.try_clone()?).await {
+                        Ok((next, lease)) => {
+                            client = next;
+                            ready = lease;
+                            sessions += 1;
+                            eprintln!("tunnel reconnected; new authenticated session {sessions}");
+                            break;
+                        }
+                        Err(error) if !mosaic_core::native::retryable(&error) => break 'outer Err(error),
+                        Err(_) => {}
+                    }
+                }
             };
             let count = |value: &AtomicU64| value.load(Ordering::Relaxed);
-            eprintln!("tunnel sent={} received={} rejected={} dropped={}", count(&counters.sent), count(&counters.received), count(&counters.rejected), count(&counters.dropped));
-            drop(ready);
+            eprintln!("tunnel sessions={sessions} sent={} received={} rejected={} dropped={}", count(&counters.sent), count(&counters.received), count(&counters.rejected), count(&counters.dropped));
             result
         })
     }

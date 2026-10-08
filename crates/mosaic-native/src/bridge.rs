@@ -178,6 +178,9 @@ fn start(bytes: &[u8], path: Option<&std::path::Path>) -> u64 {
     let Ok(profile) = Profile::read(bytes) else {
         return 0;
     };
+    if profile.config.exceptions.is_some() {
+        return 0;
+    }
     let mut builder = tempfile::Builder::new();
     builder.prefix("mosaic-");
     let directory = match path {
@@ -433,12 +436,16 @@ mod tests {
             .status
             .send_replace(Status::new(State::Connected, "fixture"));
         let packet = [0u8; 1100];
+        let config: ClientConfig =
+            serde_json::from_str(include_str!("../../../configs/client-native.example.json"))
+                .unwrap();
+        let limit = config.limits.queue_packets as i32;
         let mut accepted = 0;
-        for _ in 0..1024 {
+        for _ in 0..limit * 4 {
             accepted +=
                 unsafe { mosaic_write_packet(handle, packet.as_ptr(), packet.len()) }.max(0);
         }
-        assert!(accepted > 0 && accepted <= 256);
+        assert!(accepted > 0 && accepted <= limit);
         assert_eq!(
             unsafe { mosaic_write_packet(handle, packet.as_ptr(), 1101) },
             -1

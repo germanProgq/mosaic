@@ -108,7 +108,7 @@ pub async fn run<P: Platform>(
                     platform.verify().await?;
                     status.send_replace(Status::new(State::Connected, "IPv4 routing and tunnel DNS are ready; IPv6 is blocked"));
                     let counters = Arc::new(pump::Counters::default());
-                    let options = pump::Options { outbound: Address::Source(address), inbound: Address::Destination(address), queue_packets: config.limits.queue_packets, max_mbps: 1.0 };
+                    let options = pump::Options { outbound: Address::Source(address), inbound: Address::Destination(address), queue_packets: config.limits.queue_packets, max_mbps: config.limits.max_mbps };
                     let monitor = async {
                         loop {
                             tokio::time::sleep(Duration::from_secs(2)).await;

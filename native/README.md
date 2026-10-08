@@ -60,6 +60,29 @@ Windows installs persistent WFP protection before creating the adapter and separ
 
 Linux permits loopback, the marked relay UDP flow, the owned tunnel and DHCP broadcast. Its `not fwmark` rule selects table 19791 at priority 10990. The outer socket follows the existing underlying routing policy, binds to that interface and never replaces the host's original default route. DNS belongs only to the temporary tunnel link. Disconnect deletes only verified owned state; dropping the exclusive link releases its resolver state. External changes cause a cleanup error with protection retained. If a crash happens between firewall installation and saving its ownership snapshot, inspect the named Mosaic table rather than deleting unrelated firewall rules.
 
+Linux host mode can carry narrowly defined traffic exceptions, for a host that also serves other users. Add them to the private configuration before export:
+
+```json
+"exceptions": {"inbound_replies": true, "services": ["xray.service"]}
+```
+
+- **`inbound_replies`** sends replies on connections that a remote peer opened, such as SSH or a hosted service, through the original interface.
+- **`services`** sends all traffic from up to eight named systemd services in `system.slice` through the original interface.
+
+These rules live in the owned `inet mosaic_exempt` route table, which marks matching packets with the relay mark. The protection table then admits marked packets.
+
+- **Foreign marks.** The table first clears the Mosaic mark from any packet that is not relay transport, and it only marks packets that carry no other mark. Another program cannot borrow the exception by setting the mark itself, and marks set by other tools such as WireGuard are left alone.
+- **Tamper check.** The service compares the table with a saved copy every two seconds.
+
+- **Service restarts.** The table is rebuilt within two seconds of a named service restarting, so a new cgroup is matched again.
+- **Resolver traffic.** The exceptions do not change the resolver. A named service that uses the system resolver still sends its lookups through the tunnel.
+- **Other operating systems.** Exceptions are rejected outside Linux.
+- **What leaves directly.** Exempted traffic, including IPv6 replies and service traffic, leaves through the original interface. Everything else stays in the tunnel, and other IPv6 stays blocked.
+- **Service scope.** A service exception covers every process the service starts, and any proxy it offers to local users. Exempt only services whose direct traffic is intended.
+- **Supported services.** Template units (`name@instance.service`) are not supported. Service exceptions need the unified cgroup v2 hierarchy, and nftables `socket cgroupv2` matching on output, which needs Linux 5.13 or newer.
+
+Setup refuses strict reverse-path filtering (`rp_filter=1`) on the relay path, because strict filtering would drop relay replies. Use loose mode (`2`).
+
 Android omits the IPv6 address family, uses `protect` and binds each relay socket to the chosen non-VPN network. VPN preparation and system lockdown are required before connection. The manifest's narrowly scoped `ForegroundServicePermission` lint suppression follows the documented VPN eligibility for [the system-exempted foreground service type](https://developer.android.com/develop/background-work/services/fgs/service-types#system-exempted); Mosaic does not request unrelated alarm permissions. Backups and device transfers exclude configuration data.
 
 Desktop service connection intent and credential-directory ownership survive service restarts. Abrupt shutdown retains traffic protection. Cleanup conflicts are reported instead of restoring a whole-machine snapshot. No native runtime invokes Python or offers arbitrary privileged command execution.

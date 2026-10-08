@@ -13,6 +13,7 @@ use std::{
 pub const MARK: u32 = 0x4d4f;
 pub const TABLE: &str = "19791";
 const RULE: &str = "10990";
+const EXEMPT: &str = "mosaic_exempt";
 
 const UNIT: &str = "[Unit]\nDescription=Mosaic native VPN\nWants=network-pre.target\nBefore=network-pre.target\nAfter=systemd-resolved.service\nRequires=systemd-resolved.service\n\n[Service]\nType=notify\nExecStart=/usr/local/lib/mosaic/mosaic-service\nRestart=on-failure\nRestartSec=1\nRuntimeDirectory=mosaic\nRuntimeDirectoryMode=0755\nStateDirectory=mosaic\nStateDirectoryMode=0700\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nReadWritePaths=/var/lib/mosaic /run/mosaic\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER\nMemoryMax=256M\nLimitNOFILE=1024\n\n[Install]\nWantedBy=multi-user.target\n";
 
@@ -241,12 +242,128 @@ fn resolver(arguments: &[&str]) -> Result<String> {
 }
 
 pub fn protection(config: &ClientConfig) -> String {
+    let exempt = if config.exceptions.is_some() {
+        format!("meta mark {MARK} accept; ")
+    } else {
+        String::new()
+    };
     format!(
-        "table inet mosaic_protect {{ comment \"Mosaic owned protection\"; chain output {{ type filter hook output priority 0; policy accept; oifname \"lo\" accept; meta mark {MARK} ip daddr {} udp dport {} accept; oifname \"{}\" accept; ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept; counter drop; }} }}\n",
+        "table inet mosaic_protect {{ comment \"Mosaic owned protection\"; chain output {{ type filter hook output priority 0; policy accept; oifname \"lo\" accept; meta mark {MARK} ip daddr {} udp dport {} accept; {exempt}oifname \"{}\" accept; ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept; counter drop; }} }}\n",
         config.server.address.ip(),
         config.server.address.port(),
         config.tunnel.as_ref().unwrap().name
     )
+}
+
+pub fn exemptions(config: &ClientConfig, services: &[String]) -> Option<String> {
+    let exceptions = config.exceptions.as_ref()?;
+    let mut rules = format!(
+        "meta mark {MARK} ip daddr {} udp dport {} accept; meta mark {MARK} meta mark set 0; ",
+        config.server.address.ip(),
+        config.server.address.port()
+    );
+    if exceptions.inbound_replies {
+        rules.push_str(&format!(
+            "meta mark 0 ct direction reply meta mark set {MARK}; "
+        ));
+    }
+    for service in services {
+        rules.push_str(&format!(
+            "meta mark 0 socket cgroupv2 level 2 \"system.slice/{service}\" meta mark set {MARK}; "
+        ));
+    }
+    Some(format!(
+        "table inet {EXEMPT} {{ comment \"Mosaic owned exceptions\"; chain output {{ type route hook output priority mangle; policy accept; {rules}}} }}\n"
+    ))
+}
+
+fn present_services(config: &ClientConfig) -> Vec<(String, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    config
+        .exceptions
+        .iter()
+        .flat_map(|exceptions| exceptions.services.iter())
+        .filter_map(|service| {
+            std::fs::metadata(format!("/sys/fs/cgroup/system.slice/{service}"))
+                .ok()
+                .filter(|metadata| metadata.is_dir())
+                .map(|metadata| (service.clone(), metadata.ino()))
+        })
+        .collect()
+}
+
+fn table_present(name: &str) -> Result<bool> {
+    let inventory: Value = serde_json::from_str(&nft(&["-j", "list", "tables"], None)?)?;
+    Ok(inventory["nftables"]
+        .as_array()
+        .context("invalid firewall inventory")?
+        .iter()
+        .any(|entry| entry["table"]["family"] == "inet" && entry["table"]["name"] == name))
+}
+
+fn exempt_state() -> Result<Option<Value>> {
+    if !table_present(EXEMPT)? {
+        return Ok(None);
+    }
+    Ok(Some(normalized(serde_json::from_str(&nft(
+        &["-j", "list", "table", "inet", EXEMPT],
+        None,
+    )?)?)))
+}
+
+type Exempt = (Vec<(String, u64)>, Option<Value>);
+
+fn install_exemptions(config: &ClientConfig) -> Result<Exempt> {
+    let mut attempt = 0;
+    loop {
+        let present = present_services(config);
+        let names: Vec<String> = present.iter().map(|(name, _)| name.clone()).collect();
+        let Some(definition) = exemptions(config, &names) else {
+            return Ok((present, None));
+        };
+        let script = if table_present(EXEMPT)? {
+            format!("delete table inet {EXEMPT}\n{definition}")
+        } else {
+            definition
+        };
+        let installed = nft(&["-c", "-f", "-"], Some(script.as_bytes()))
+            .and_then(|_| nft(&["-f", "-"], Some(script.as_bytes())));
+        match installed {
+            Ok(_) => return Ok((present, exempt_state()?)),
+            Err(_) if attempt == 0 && present != present_services(config) => attempt += 1,
+            Err(error) => {
+                return Err(error.context(
+                    "cannot install traffic exceptions; service matching needs nftables socket cgroupv2 support on Linux 5.13 or newer",
+                ));
+            }
+        }
+    }
+}
+
+pub fn strict_reverse_path(all: Option<&str>, device: Option<&str>) -> bool {
+    let value = |text: Option<&str>| text.and_then(|t| t.trim().parse::<u8>().ok()).unwrap_or(0);
+    value(all).max(value(device)) == 1
+}
+
+fn reverse_path_setting(name: &str) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/sys/net/ipv4/conf/{name}/rp_filter")).ok()
+}
+
+fn underlying_device(config: &ClientConfig) -> Result<String> {
+    let routes: Vec<Value> = serde_json::from_str(&ip(&[
+        "-j",
+        "-4",
+        "route",
+        "get",
+        &config.server.address.ip().to_string(),
+        "mark",
+        &MARK.to_string(),
+    ])?)?;
+    Ok(routes
+        .first()
+        .and_then(|route| route["dev"].as_str())
+        .context("no underlying relay path")?
+        .to_string())
 }
 
 fn rules() -> Result<Vec<Value>> {
@@ -263,6 +380,7 @@ pub struct Network {
     configured: Mutex<bool>,
     protection: Mutex<Option<Value>>,
     path: Mutex<String>,
+    exempt: Mutex<Exempt>,
 }
 
 fn normalized(mut value: Value) -> Value {
@@ -309,15 +427,7 @@ fn owned_route(route: &Value, config: &ClientConfig) -> bool {
 }
 
 fn protection_state() -> Result<Option<Value>> {
-    let inventory: Value = serde_json::from_str(&nft(&["-j", "list", "tables"], None)?)?;
-    let present = inventory["nftables"]
-        .as_array()
-        .context("invalid protection inventory")?
-        .iter()
-        .any(|entry| {
-            entry["table"]["family"] == "inet" && entry["table"]["name"] == "mosaic_protect"
-        });
-    if !present {
+    if !table_present("mosaic_protect")? {
         return Ok(None);
     }
     Ok(Some(normalized(serde_json::from_str(&nft(
@@ -385,6 +495,27 @@ impl Network {
                 );
             }
         }
+        let device = underlying_device(config)?;
+        ensure!(
+            !strict_reverse_path(
+                reverse_path_setting("all").as_deref(),
+                reverse_path_setting(&device).as_deref()
+            ),
+            "strict reverse-path filtering on the underlying interface would drop relay replies; use loose mode (2) or disable it"
+        );
+        ensure!(
+            recovering || !table_present(EXEMPT)?,
+            "traffic exception ownership conflict; existing filters are preserved"
+        );
+        ensure!(
+            config
+                .exceptions
+                .as_ref()
+                .is_none_or(|e| e.services.is_empty())
+                || std::path::Path::new("/sys/fs/cgroup/cgroup.controllers").exists(),
+            "service traffic exceptions require the unified cgroup v2 hierarchy"
+        );
+        let exempt = install_exemptions(config)?;
         let protected = install_protection(config, recovering)?;
         let tun = Tun::create(config.tunnel.as_ref().unwrap())?;
         Ok(Self {
@@ -393,6 +524,7 @@ impl Network {
             configured: Mutex::new(false),
             protection: Mutex::new(Some(protected)),
             path: Mutex::new(String::new()),
+            exempt: Mutex::new(exempt),
         })
     }
 
@@ -420,6 +552,23 @@ impl Network {
             device,
             route["gateway"].as_str().unwrap_or("")
         ))
+    }
+
+    fn refresh_exceptions(&self) -> Result<()> {
+        if self.config.exceptions.is_none() {
+            return Ok(());
+        }
+        let present = present_services(&self.config);
+        let mut exempt = self.exempt.lock().unwrap();
+        if exempt.0 != present || !table_present(EXEMPT)? {
+            *exempt = install_exemptions(&self.config)?;
+            return Ok(());
+        }
+        ensure!(
+            exempt_state()? == exempt.1,
+            "Mosaic traffic exceptions changed"
+        );
+        Ok(())
     }
 
     pub fn changed(&self) -> Result<bool> {
@@ -475,6 +624,9 @@ impl Network {
         let snapshot = std::path::Path::new("/var/lib/mosaic/protection.json");
         if snapshot.exists() {
             std::fs::remove_file(snapshot)?;
+        }
+        if table_present(EXEMPT)? {
+            nft(&["delete", "table", "inet", EXEMPT], None)?;
         }
         Ok(())
     }
@@ -577,6 +729,7 @@ impl Platform for Network {
             rules()?.iter().any(|rule| owned_rule(rule, RULE, TABLE)),
             "Mosaic route rule disappeared"
         );
+        self.refresh_exceptions()?;
         let actual: Value = serde_json::from_str(&nft(
             &["-j", "list", "table", "inet", "mosaic_protect"],
             None,
@@ -604,6 +757,7 @@ impl Platform for Network {
     }
 
     async fn discard(&self) -> Result<()> {
+        self.refresh_exceptions()?;
         for _ in 0..256 {
             let mut packet = [0; 1101];
             if tokio::time::timeout(Duration::from_millis(1), self.tun.receive(&mut packet))
@@ -614,5 +768,67 @@ impl Platform for Network {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(exceptions: Option<mosaic_core::config::Exceptions>) -> ClientConfig {
+        let mut config: ClientConfig =
+            serde_json::from_str(include_str!("../../../configs/client-native.example.json"))
+                .unwrap();
+        config.exceptions = exceptions;
+        config
+    }
+
+    #[test]
+    fn protection_without_exceptions_keeps_the_narrow_relay_rule() {
+        let text = protection(&config(None));
+        assert!(text.contains(&format!(
+            "meta mark {MARK} ip daddr 203.0.113.10 udp dport 443 accept"
+        )));
+        assert!(!text.contains(&format!("meta mark {MARK} accept")));
+        assert!(text.ends_with("counter drop; } }\n"));
+        assert!(exemptions(&config(None), &[]).is_none());
+    }
+
+    #[test]
+    fn exceptions_mark_inbound_replies_and_named_services_only() {
+        let exceptions = mosaic_core::config::Exceptions {
+            inbound_replies: true,
+            services: vec!["xray.service".into()],
+        };
+        let config = config(Some(exceptions));
+        assert!(protection(&config).contains(&format!("meta mark {MARK} accept; oifname")));
+        let text = exemptions(&config, &["xray.service".into()]).unwrap();
+        assert!(text.contains("type route hook output priority mangle"));
+        assert!(text.contains(&format!(
+            "meta mark 0 ct direction reply meta mark set {MARK}"
+        )));
+        assert!(text.contains(&format!(
+            "meta mark 0 socket cgroupv2 level 2 \"system.slice/xray.service\" meta mark set {MARK}"
+        )));
+        let strip = text
+            .find(&format!("meta mark {MARK} meta mark set 0"))
+            .unwrap();
+        let relay = text
+            .find(&format!(
+                "meta mark {MARK} ip daddr 203.0.113.10 udp dport 443 accept"
+            ))
+            .unwrap();
+        assert!(relay < strip && strip < text.find("ct direction").unwrap());
+        let without_service = exemptions(&config, &[]).unwrap();
+        assert!(!without_service.contains("cgroupv2"));
+    }
+
+    #[test]
+    fn strict_reverse_path_filtering_is_detected() {
+        assert!(strict_reverse_path(Some("1\n"), Some("0\n")));
+        assert!(strict_reverse_path(Some("0\n"), Some("1\n")));
+        assert!(!strict_reverse_path(Some("2\n"), Some("1\n")));
+        assert!(!strict_reverse_path(Some("0\n"), Some("2\n")));
+        assert!(!strict_reverse_path(None, None));
     }
 }

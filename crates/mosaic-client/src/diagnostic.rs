@@ -9,12 +9,22 @@ pub async fn run(
     c: &ClientConfig,
     case: &str,
     options: &quic::DatagramOptions,
+    max_mbps: Option<f64>,
     report: &mut Report,
 ) {
     if let Err(e) = options.validate() {
         report.add("diagnostic.options", Status::Fail, &e.to_string());
         return;
     }
+    if max_mbps.is_some_and(|rate| !(rate.is_finite() && rate > 0.0 && rate <= 1.0)) {
+        report.add(
+            "diagnostic.options",
+            Status::Fail,
+            "diagnostic rate limit must be above 0 and at most 1 Mbit/s",
+        );
+        return;
+    }
+    let rate = max_mbps.unwrap_or_else(|| c.test_limits.as_ref().map_or(1.0, |l| l.max_mbps));
     let placeholder = match c.server.address.ip() {
         std::net::IpAddr::V4(ip) => ip.is_documentation(),
         std::net::IpAddr::V6(ip) => ip.segments()[0..2] == [0x2001, 0xdb8],
@@ -79,7 +89,7 @@ pub async fn run(
         return;
     }
     if case == "datagram-echo" {
-        match quic::datagram_suite(&client.connection, options, c.test_limits.as_ref().map_or(1.0, |l| l.max_mbps)).await {
+        match quic::datagram_suite(&client.connection, options, rate).await {
             Ok(received) => report.add("quic.datagram_echo", Status::Pass, &format!("{received}/{} unique byte-exact replies of {} bytes; receive window ends three seconds after final send", options.count, options.size)),
             Err(_) => report.add("quic.datagram_echo", Status::Fail, "invalid datagram, excessive loss, size error or diagnostic deadline exceeded"),
         }
@@ -90,12 +100,7 @@ pub async fn run(
     } else {
         "ordinary host UDP egress; request+response payload paced below configured ceiling with QUIC headroom; VPN/direct path not independently verified"
     });
-    match quic::echo_suite(
-        &client.connection,
-        c.test_limits.as_ref().map_or(1.0, |l| l.max_mbps),
-    )
-    .await
-    {
+    match quic::echo_suite(&client.connection, rate).await {
         Ok(outcomes) => {
             for (size, count) in outcomes {
                 report.add(&format!("quic.echo.{size}"), Status::Pass, &format!("{count}/100 byte-exact echoes of {size} bytes; up to three simultaneous streams on one connection"));

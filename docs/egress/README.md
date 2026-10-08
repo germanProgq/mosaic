@@ -38,6 +38,8 @@ Uploads are at most 16 MiB. The upload count/hash describes the submitted body; 
 
 ## Dedicated relay forwarding
 
+The installed relay service now applies the same rules itself (`mosaic-relay --tunnel --forwarding`; see [Relay installation](../../README.md#relay-installation)), with no Python at runtime. Its ownership record is under `/var/lib/mosaic-relay`. The Python helper below remains for development and shared-node tests.
+
 After read-only relay inventory, identify its WAN interface and confirm that this is the dedicated relay. Keep its administration session available. Run only on that relay:
 
 ```sh

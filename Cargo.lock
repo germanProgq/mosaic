@@ -699,6 +699,7 @@ dependencies = [
  "libc",
  "mosaic-core",
  "mosaic-native",
+ "quinn",
  "reqwest",
  "serde",
  "serde_json",
@@ -755,8 +756,14 @@ dependencies = [
 name = "mosaic-relay"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
+ "libc",
  "mosaic-core",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
 ]
 

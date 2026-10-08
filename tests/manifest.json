@@ -138,13 +138,38 @@
     },
     {
       "check_level": 6,
-      "implementation": "pending",
-      "name": "MTU IPv6 and UDP"
+      "implementation": "local packet size, fragment, UDP integrity and IPv6 rejection tests through real QUIC",
+      "name": "MTU IPv6 and UDP",
+      "local": [
+        "mtu.full_1100_byte_packets_and_1101_rejection",
+        "mtu.ipv4_fragments_pass_and_invalid_lengths_rejected",
+        "udp.byte_exact_1_to_1072_bytes_both_directions_at_1mbps",
+        "ipv6.rejected_in_both_directions",
+        "transport.oversize_packet_explicit_error"
+      ],
+      "live_required": [
+        "mtu.namespace_ping_1072_df_20_of_20_and_1073_mtu_error",
+        "udp.namespace_echo_sizes_99_of_100",
+        "udp.fragmented_1400_byte_payload_reassembles",
+        "ipv6.namespace_external_fetch_fails",
+        "node.v_300s_before_5s_during_after"
+      ]
     },
     {
       "check_level": 7,
-      "implementation": "pending",
-      "name": "Transport interface"
+      "implementation": "packet transport interface with Quinn adapter; pump uses the interface",
+      "name": "Transport interface",
+      "local": [
+        "transport.serialized_vectors_unchanged",
+        "transport.real_adapter_size_and_oversize_error",
+        "transport.bounded_queues_and_cancellation",
+        "transport.streams_end_tunnel_mode"
+      ],
+      "live_required": [
+        "transport.old_relay_new_client_and_new_relay_old_client",
+        "transport.120_capped_dns_https_cycles",
+        "node.v_300s_before_5s_during_after"
+      ]
     },
     {
       "check_level": 8,
@@ -163,8 +188,18 @@
     },
     {
       "check_level": 9,
-      "implementation": "pending",
-      "name": "Capped regression and reporting"
+      "implementation": "combined capped diagnostic command and live soak driver",
+      "name": "Capped regression and reporting",
+      "local": [
+        "regression.test_all_cases_with_rate_limit",
+        "repeat.fresh_processes"
+      ],
+      "live_required": [
+        "regression.all_cases_twice_from_fresh_starts",
+        "soak.360_of_360_dns_https_cycles",
+        "soak.bounded_rss_and_descriptors",
+        "node.v_300s_before_5s_during_after"
+      ]
     }
   ],
   "requirements": [
@@ -184,7 +219,7 @@
     },
     "relay": {
       "status": "BLOCKED",
-      "reason": "The compiled relay exists; supported compiled forwarding setup, cleanup and service installation are missing. Python administration remains a developer tool."
+      "reason": "Compiled relay setup, owned forwarding, restart, kill recovery, uninstall and reinstall passed live on the relay host with Xray preserved. Tunnel egress from a separate client is still untested."
     },
     "required_report_fields": [
       "source_revision",

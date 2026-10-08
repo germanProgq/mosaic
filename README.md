@@ -4,7 +4,7 @@ The required product is a macOS and Windows VPN client that routes ordinary appl
 
 Native setup, authenticated QUIC diagnostics, bounded packet framing, Linux isolated TUN, native HTTPS fetch, dedicated relay forwarding, namespace default routing and private DNS are implemented. The client verifies the relay certificate before sending its token and completes SessionInit, SessionReady and ClientReady before stream or datagram echoes are accepted.
 
-Live Linux TUN traffic, packet rejection and cleanup have been verified on both supplied servers; see [the server test record](docs/testing/README.md). Native Mac QUIC, uninterrupted automation, live egress, DNS and outage acceptance remain incomplete. Desktop tunnel integration, connect/disconnect/status, routing and DNS, failure protection, reconnect, private configuration import, installers and actual platform acceptance are missing. The relay still needs supported compiled setup and cleanup. See [the namespace DNS guide](docs/dns/README.md) and [the forwarding and fetch guide](docs/egress/README.md). Local test results do not certify desktop VPN delivery, live deployment or VPN preservation.
+Live Linux TUN traffic, packet rejection and cleanup have been verified on both supplied servers; see [the server test record](docs/testing/README.md). Native Mac QUIC, uninterrupted automation, live egress, DNS and outage acceptance remain incomplete. Installed macOS and Windows acceptance is missing. The relay now has a compiled installer, systemd service and owned forwarding; its live acceptance is recorded separately. See [the namespace DNS guide](docs/dns/README.md) and [the forwarding and fetch guide](docs/egress/README.md). Local test results do not certify desktop VPN delivery, live deployment or VPN preservation.
 
 ## Desktop support and completion
 
@@ -12,7 +12,7 @@ No macOS or Windows OS version or CPU architecture is currently supported as a d
 
 The native client now includes macOS and iOS Network Extension providers, Windows Wintun/WFP service integration, Linux TUN/nftables/systemd integration and Android VpnService integration. Shared Rust code owns authentication, packet handling and reconnect. See [native packages and test commands](native/README.md) for installation, signing, permissions, supported build targets and exact limitations.
 
-`tests/manifest.json` keeps installed-device acceptance BLOCKED separately from implementation and compilation. macOS applications and extensions compile for Apple silicon and Intel, the iOS application and extension compile for arm64, Android builds an APK for arm64 and x64, and Linux/Windows cross-builds pass. Apple signing assets, Windows installer environment and physical platform acceptance are unavailable here. No target is certified from these builds alone. The existing Linux relay delivery still needs compiled forwarding installation and cleanup.
+`tests/manifest.json` keeps installed-device acceptance BLOCKED separately from implementation and compilation. macOS applications and extensions compile for Apple silicon and Intel, the iOS application and extension compile for arm64, Android builds an APK for arm64 and x64, and Linux/Windows cross-builds pass. Apple signing assets, Windows installer environment and physical platform acceptance are unavailable here. No target is certified from these builds alone. The Linux relay installs with `mosaic-relay --setup`; see [Relay installation](#relay-installation).
 
 Installed-package reports must verify ordinary browser/application egress, system DNS, no public IPv4/IPv6 bypass, three 20-second relay outages with recovery within 45 seconds, component failures, network changes, sleep/wake, reboot, permissions, owned-state cleanup, repeated installation, upgrade/uninstall and the bounded soak. Preserve the shared Linux VPN checks. The inner tunnel remains IPv4-only with MTU 1100; native platform integration owns IPv6 protection.
 
@@ -42,7 +42,7 @@ The stream case performs 100 byte-exact echoes at each size: 0, 1, 64, 1024 and 
 
 The datagram case adds a 12-byte version/kind/length/sequence header, verifies every received payload and counts unique replies through three seconds after the final send. It requires 1000/1000 replies on loopback or at least 990/1000 remotely. Count is limited to 10000, payload size to 1100 bytes and rate to 50 packets/s; the capped send schedule must fit 210 seconds. Duplicate replies never increase the success count. Malformed packets and IP packet kinds are rejected by the diagnostic relay.
 
-Application packet queues hold at most 256 packets; QUIC send and receive datagram buffers are each 256 KiB. Reliable connection windows remain 256 KiB. The relay admits eight active connection tasks, three stream tasks per connection and 512 diagnostic streams per connection. It also caps tracked QUIC connections, including closed connections awaiting removal, at 64. Remote stream and datagram responses share a paced budget, with headroom below the ordinary 1 Mbit/s ceiling. The client's datagram pacing also includes both directions and overhead. Loopback streams skip pacing; loopback datagrams retain their bounded schedule. These are correctness tests, not peak-throughput measurements.
+Tunnel packet queues hold at most 2048 packets (the examples use 512). The QUIC datagram send buffer is 512 KiB, which keeps queueing delay low. The receive buffer is 2 MiB, connection windows are 16 MiB, and QUIC uses BBR congestion control. Tunnel traffic is not rate limited unless `limits.max_mbps` is set in the client or relay configuration; without it, congestion control alone sets the speed. The limit counts both directions together, including about 96 bytes of overhead per packet. An unlimited relay lets anyone holding the token use its full uplink, so set a limit when that matters. The idle timeout may be 4 to 15 seconds and must be at least twice the 1 to 5 second keepalive; the examples use 8 and 2 seconds so lost relays are detected quickly. The relay admits eight active connection tasks, three stream tasks per connection and 512 diagnostic streams per connection. It also caps tracked QUIC connections, including closed connections awaiting removal, at 64. Diagnostic stream and datagram responses keep their own paced budget below 1 Mbit/s, and diagnostic echo queues stay at 256 packets. The client's datagram pacing also includes both directions and overhead. Loopback streams skip pacing; loopback datagrams retain their bounded schedule. These are correctness tests, not peak-throughput measurements.
 
 `test` reports `scope: authenticated-diagnostics`. PASS covers only the requested case. Host egress uses an outbound-only ephemeral UDP socket and ordinary OS routing; the VPN/direct outer path and preservation gate V require independent live evidence. Failed TLS, authorization, size negotiation or blocked UDP returns FAIL without changing host network policy.
 
@@ -68,7 +68,7 @@ sudo ./mosaic-client isolated-up -c configs/client-node.json \
 
 The launcher requires Python 3, the existing inventory tools, Linux namespace-cookie and pidfd support, root for setup, and a configured non-root account. The policy must match the relay IP, namespace and tunnel subnet. The guard verifies the baseline before setup, then checks host configuration, exact socket/namespace ownership and VPN health every five seconds. A failed probe, changed egress, drift, missed sampling deadline, excessive rolling latency or worker RSS above 256 MiB stops the run. Each packet pump has bounded queues and a capped schedule. These checks do not constitute a CPU reservation.
 
-The worker’s namespace contains only loopback and its TUN, with the configured connected /30, MTU 1100 and a default route through TUN. TUN IPv6 is disabled. Its private mount namespace supplies DNS at 1.1.1.1. Run applications through `isolated-exec` to enter both namespaces. No veth, host route, firewall, host forwarding or host resolver change is installed. The relay service likewise adds only its TUN and connected subnet; the dedicated forwarding helper separately configures forwarding and NAT.
+The worker’s namespace contains only loopback and its TUN, with the configured connected /30, MTU 1100 and a default route through TUN. TUN IPv6 is disabled. Its private mount namespace supplies DNS at 1.1.1.1. Run applications through `isolated-exec` to enter both namespaces. No veth, host route, firewall, host forwarding or host resolver change is installed. The relay started with `--tunnel` alone likewise adds only its TUN and connected subnet; `--forwarding` (used by the installed service) adds its owned forwarding and NAT.
 
 With the default example addresses, inspect and test from another administration session:
 
@@ -163,7 +163,59 @@ Copy/edit `configs/relay.example.json` to `configs/relay.json`, then on the rela
 ./mosaic-relay -c configs/relay.json --check-config
 ```
 
-This validates the certificate/key pairing, one-owner tunnel settings and bounded fetch configuration, without opening a listener. Inventory public IPv4, existing SSH, UDP 443 occupancy/firewall policy, ordinary DNS/HTTPS and `/dev/net/tun` on the actual dedicated relay before deployment. Port availability is not proof of UDP reachability; that requires QUIC. The relay service does not configure forwarding, NAT or inbound policy. The dedicated forwarding helper is described in [the egress guide](docs/egress/README.md).
+This validates the certificate/key pairing, one-owner tunnel settings and bounded fetch configuration, without opening a listener. Inventory public IPv4, existing SSH, UDP 443 occupancy/firewall policy, ordinary DNS/HTTPS and `/dev/net/tun` on the actual dedicated relay before deployment. Port availability is not proof of UDP reachability; that requires QUIC. The relay never configures inbound policy. Forwarding and NAT come from `--forwarding` or the installed service; see [Relay installation](#relay-installation).
+
+## Local proxy
+
+`mosaic-client proxy` runs a SOCKS5 server on this computer. Each TCP connection an application opens through it travels as its own QUIC stream to the relay, which looks up the name and connects from its own address. The proxy needs no administrator rights, no Network Extension and no driver, so it runs on macOS without Apple signing.
+
+```sh
+./mosaic-client proxy -c client.json
+./mosaic-client proxy -c client.json --listen 127.0.0.1:1080 --interface en0
+```
+
+- **Listen address:** the proxy only listens on a loopback address. The default is `127.0.0.1:1080`.
+- **`--interface`:** binds the relay connection to one network interface. On macOS this keeps it out of another VPN's tunnel.
+- **Reconnects:** the proxy keeps one authenticated QUIC connection and reconnects when the relay restarts. Connections that were open at that moment fail; new ones use the new session.
+- **What it carries:** TCP CONNECT only, with names resolved on the relay. It does not carry UDP, so applications that need UDP (including QUIC/HTTP3) fall back to TCP or bypass the proxy. IPv6 destinations are refused.
+- **What it does not change:** system routes, DNS and firewall rules. Only applications configured to use the proxy are affected.
+- **Relay side:** the relay must run with `--proxy`; the installed service does.
+- **Relay limits:** the relay accepts up to 256 simultaneous proxied connections per session. It refuses port 25, IPv6, private, link-local and loopback ranges, and its own networks.
+
+To use it as a Shadowrocket node, add a server of type SOCKS5 with address `127.0.0.1` and port `1080`, then select it or route chosen rules to it. Start the proxy with `--interface en0` (or the Mac's active interface) so its connection to the relay does not loop back through Shadowrocket.
+
+## Relay installation
+
+Build the relay for the server's architecture, copy it with a validated `relay.json` and its credentials, then install it as root:
+
+```sh
+sudo ./mosaic-relay -c configs/relay.json --setup
+```
+
+Setup validates the configuration and credentials, then installs:
+
+- the binary in `/usr/local/lib/mosaic-relay/`;
+- the configuration and credentials in `/etc/mosaic-relay/` (owner-only);
+- `mosaic-relay.service`, which it enables and starts.
+
+The service runs `--tunnel --forwarding --proxy`. At start it installs owned nftables tables `inet mosaic_forward` and `ip mosaic_nat`, which:
+
+- allow and masquerade only the configured tunnel client through the single IPv4 default-route interface;
+- drop tunnel traffic to private, shared, link-local (including cloud metadata), loopback, multicast and reserved IPv4 ranges, and to the relay's own WAN subnets;
+- drop tunnel traffic addressed to the relay host itself, except ICMP echo and replies;
+- drop all other forwarding while the relay runs, if IPv4 forwarding was off before it started;
+- add a `mosaic_egress` jump to any existing forward filter chain so that chain's drop policy still admits tunnel traffic;
+- enable `net.ipv4.ip_forward`.
+
+The previous forwarding value is recorded under `/var/lib/mosaic-relay`. It is restored when the service stops, unless new forward chains appeared meanwhile; in that case forwarding is left on and a message is logged. If cleanup was interrupted, the next start or uninstall completes it. The service refuses to start while firewalld is active or ufw is enabled, while conflicting legacy iptables rules exist, or while Mosaic-named firewall objects exist without an ownership record. It never touches other services' listeners or rules. The unit runs with a restricted capability set, access only to `/dev/net/tun`, and unlimited restarts five seconds apart, so a missing default route at boot does not leave it permanently failed. Setup reports failure unless the service is still active with no restarts four seconds after starting.
+
+Running setup again upgrades an owned installation after verifying the installed file hashes. Remove the installation with:
+
+```sh
+sudo /usr/local/lib/mosaic-relay/mosaic-relay --uninstall
+```
+
+Uninstall stops the service, which removes the forwarding rules. It then deletes only the files recorded at setup, and reports a failure instead of removing anything that changed. `tools/network/forwarding.py` remains a developer tool for the shared-node tests.
 
 ## Shared Linux node baseline
 

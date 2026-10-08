@@ -2,6 +2,37 @@
 
 These historical records cover diagnostic and isolated Linux behavior only. They do not establish macOS or Windows full-device VPN support. [The corrections](../../fixes.md) and [acceptance manifest](../../tests/manifest.json) require separate installed-package evidence for both desktop clients and compiled relay setup and cleanup. Those deliverables remain BLOCKED; the original PASS and FAIL results below retain their recorded scope.
 
+## Local proxy
+
+October 8, 2026: **proxy mode passed on the relay host; the Mac proxy was built but not run.**
+
+- **Relay upgrade:** the relay was upgraded in place to run `--tunnel --forwarding --proxy`.
+- **Test setup:** a `mosaic-client proxy` ran on the relay host and connected to the relay's public address.
+- **Egress:** traffic through it left with the relay's address.
+- **Requests:** 10 of 10 HTTPS requests took 16–24 ms, against 17–27 ms direct, and 30 parallel connections all succeeded.
+- **Download:** 50 MB ran at 40.0 MB/s through the proxy and 39.1 MB/s direct.
+- **Blocked destinations:** the relay's SSH port, cloud metadata and a loopback-only service were refused.
+- **Relay restart:** after a restart, new requests worked again without restarting the proxy.
+- **Memory:** about 10 MB for the client and 12 MB for the relay.
+- **Xray health:** 82 representative five-second Xray samples, including a three-minute fresh baseline, showed no failures and the same Xray process.
+- **What this does not measure:** client and relay shared a host, so these numbers do not measure the path from a remote client.
+
+## Relay installation
+
+October 8, 2026: **compiled relay installation passed on 203.0.113.76; tunnel egress from a separate client is untested.**
+
+- **Replaced service:** the earlier fetch-only relay, launched through Python, was archived on the relay and removed.
+- **Credentials:** new 30-day credentials were generated on the relay; the private key never left it.
+- **Installed:** `mosaic-relay --setup` installed the hardened service with owned forwarding.
+- **First install attempt:** it stopped safely before any rules were installed. Ubuntu reports `ufw.service` as active even when ufw is disabled, so the check now reads ufw's own setting.
+- **Diagnostics:** session, stream echo and 1000 datagram echoes passed from the relay host.
+- **Rejections:** a wrong token, an untrusted certificate and the wrong server name were rejected, and a valid session worked afterwards.
+- **Restart and kill:** after a restart and after SIGKILL, the service recovered with exactly one set of forwarding rules.
+- **Stop:** removed the rules and the ownership record. IPv4 forwarding kept its original value of 1.
+- **Uninstall and reinstall:** uninstall left no files or rules, and reinstall passed.
+- **Xray health:** 181 five-second representative samples ran across the whole window, including a 300-second baseline, with no failures. The Xray PID and restart count did not change, and the median probe time stayed near 236 ms.
+- **Not yet tested:** a separate client using the tunnel. The test node rejected its recorded password after a reinstall, and the Mac's Shadowrocket VPN intercepts UDP to the relay.
+
 ## Linux TUN and cleanup
 
 September 10, 2026: **the individual Linux checks passed across the recorded runs; the complete plan remains blocked.** The native Mac QUIC failure and privileged Mac firewall gap below remain unresolved. The second automated TUN sequence was interrupted by administrative collection failures, so its original report remains FAIL.

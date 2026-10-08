@@ -21,13 +21,19 @@ pub struct Settings {
     token: [u8; 32],
     pub control_limit: usize,
     pub queue_packets: usize,
+    pub max_mbps: Option<f64>,
     pub fetch: Option<crate::config::Fetch>,
     tunnel: Option<std::sync::Arc<tokio::sync::Semaphore>>,
+    proxy: bool,
 }
 
 impl Settings {
     pub fn enable_fetch(&mut self, fetch: crate::config::Fetch) {
         self.fetch = Some(fetch);
+    }
+
+    pub fn enable_proxy(&mut self) {
+        self.proxy = true;
     }
 
     pub fn enable_tunnel(&mut self) {
@@ -43,9 +49,11 @@ impl Settings {
         Ok(Self {
             token: read_token(&c.auth.token_file)?,
             tunnel: None,
+            proxy: false,
             fetch: None,
             control_limit: c.limits.max_control_bytes,
             queue_packets: c.limits.queue_packets.min(frame::MAX_QUEUE_PACKETS),
+            max_mbps: c.limits.max_mbps,
         })
     }
 }
@@ -98,6 +106,10 @@ pub async fn authorize_tunnel(connection: &Connection, c: &ClientConfig) -> Resu
         "TUN configuration required"
     );
     authorize_mode(connection, c, "tunnel").await
+}
+
+pub async fn authorize_proxy(connection: &Connection, c: &ClientConfig) -> Result<Ready> {
+    authorize_mode(connection, c, "proxy").await
 }
 
 pub async fn authorize_fetch(connection: &Connection, c: &ClientConfig) -> Result<Ready> {
@@ -157,20 +169,24 @@ async fn authorize_mode(
         )
         .await?;
         send.finish()?;
-        frame::finish_control(&mut recv).await?;
-        Ok(Ready {
-            session_id,
-            send_limit: agreed,
-            mode: expected_mode.into(),
-            lease: None,
-        })
+        Ok((
+            recv,
+            Ready {
+                session_id,
+                send_limit: agreed,
+                mode: expected_mode.into(),
+                lease: None,
+            },
+        ))
     };
     let result = timeout(CONNECT_DEADLINE, async {
-        tokio::select! {
+        let (mut recv, ready) = tokio::select! {
             biased;
             _ = connection.read_datagram() => bail!("data before Ready"),
-            result = work => result,
-        }
+            result = work => result?,
+        };
+        frame::finish_control(&mut recv).await?;
+        Ok(ready)
     })
     .await
     .context("session exceeded five seconds")
@@ -211,7 +227,7 @@ pub async fn accept(connection: &Connection, settings: &Settings) -> Result<Read
             );
             ensure!(
                 version == frame::VERSION
-                    && (mode == "diagnostic" || mode == "tunnel" || mode == "fetch")
+                    && matches!(mode.as_str(), "diagnostic" | "tunnel" | "fetch" | "proxy")
                     && mtu == frame::MTU,
                 "unsupported session"
             );
@@ -219,6 +235,7 @@ pub async fn accept(connection: &Connection, settings: &Settings) -> Result<Read
                 mode != "fetch" || settings.fetch.is_some(),
                 "fetch mode unavailable"
             );
+            ensure!(mode != "proxy" || settings.proxy, "proxy mode unavailable");
             ensure!(
                 peer_limit >= frame::MTU + frame::PACKET_HEADER_BYTES,
                 SizeError

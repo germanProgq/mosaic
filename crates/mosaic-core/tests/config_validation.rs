@@ -38,7 +38,9 @@ fn client_rejects_unsafe_or_unknown_settings_without_echoing_values() {
         ("/transport/idle_timeout_s", json!(999)),
         ("/transport/keepalive_s", json!(0)),
         ("/limits/max_control_bytes", json!(4097)),
-        ("/limits/queue_packets", json!(257)),
+        ("/limits/queue_packets", json!(2049)),
+        ("/limits/queue_packets", json!(0)),
+        ("/transport/idle_timeout_s", json!(3)),
         ("/server/name", json!("https://secret@host/")),
         ("/server/address", json!("0.0.0.0:443")),
     ] {
@@ -192,4 +194,66 @@ fn relay_rejects_unbounded_proxy_and_multiple_tunnel_owners() {
             "{pointer}"
         );
     }
+}
+
+#[test]
+fn rate_limits_and_timeouts_are_optional_but_bounded() {
+    let dir = TempDir::new().unwrap();
+    let mut value = example("client");
+    value["limits"]["max_mbps"] = json!(250.0);
+    value["limits"]["queue_packets"] = json!(2048);
+    value["transport"]["idle_timeout_s"] = json!(8);
+    value["transport"]["keepalive_s"] = json!(2);
+    let config = ClientConfig::load(&write(&dir, &value)).unwrap();
+    assert_eq!(config.limits.max_mbps, Some(250.0));
+    for (pointer, bad) in [
+        ("/limits/max_mbps", json!(0.0)),
+        ("/limits/max_mbps", json!(-5.0)),
+        ("/limits/max_mbps", json!(1.0e9)),
+        ("/transport/keepalive_s", json!(5)),
+    ] {
+        let mut value = value.clone();
+        *value.pointer_mut(pointer).unwrap() = bad;
+        assert!(
+            ClientConfig::load(&write(&dir, &value)).is_err(),
+            "{pointer}"
+        );
+    }
+    let unlimited = example("client");
+    assert_eq!(
+        ClientConfig::load(&write(&dir, &unlimited))
+            .unwrap()
+            .limits
+            .max_mbps,
+        None
+    );
+}
+#[test]
+fn traffic_exceptions_are_native_linux_only_and_validated() {
+    let dir = TempDir::new().unwrap();
+    let mut native = example("client-native");
+    native["tls"]["trust_cert"] = json!("relay.crt");
+    native["auth"]["token_file"] = json!("client.token");
+    native["exceptions"] = json!({"inbound_replies": true, "services": ["xray.service"]});
+    ClientConfig::load(&write(&dir, &native)).unwrap();
+    for bad in [
+        json!({"inbound_replies": false, "services": []}),
+        json!({"inbound_replies": true, "services": ["xray"]}),
+        json!({"inbound_replies": true, "services": ["../x.service"]}),
+        json!({"inbound_replies": true, "services": ["a\".service"]}),
+        json!({"inbound_replies": true, "services": ["a.service", "a.service"]}),
+        json!({"inbound_replies": true, "services": ["SENSITIVE_CANARY"], "extra": 1}),
+    ] {
+        let mut value = native.clone();
+        value["exceptions"] = bad;
+        let err = ClientConfig::load(&write(&dir, &value)).err().unwrap();
+        assert!(!err.to_string().contains("SENSITIVE_CANARY"));
+    }
+    let mut diagnostic = example("client");
+    diagnostic["exceptions"] = json!({"inbound_replies": true, "services": []});
+    assert!(ClientConfig::load(&write(&dir, &diagnostic)).is_err());
+    assert!(mosaic_core::config::service_name("xray.service"));
+    assert!(!mosaic_core::config::service_name("getty@tty1.service"));
+    assert!(!mosaic_core::config::service_name(".service"));
+    assert!(!mosaic_core::config::service_name("-x.service"));
 }

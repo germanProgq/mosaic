@@ -9,8 +9,8 @@
   "transport": {
     "type": "quic",
     "alpn": "mosaic-poc/2",
-    "idle_timeout_s": 15,
-    "keepalive_s": 5
+    "idle_timeout_s": 8,
+    "keepalive_s": 2
   },
   "tls": {
     "trust_cert": "secrets/relay.crt"
@@ -24,7 +24,7 @@
   },
   "limits": {
     "max_control_bytes": 4096,
-    "queue_packets": 256
+    "queue_packets": 512
   },
   "tunnel": {
     "name": "mosaic0",

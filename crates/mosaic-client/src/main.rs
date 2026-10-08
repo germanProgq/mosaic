@@ -3,6 +3,7 @@ mod fetch;
 mod native;
 mod netns_launcher;
 mod preflight;
+mod proxy;
 use clap::{Parser, Subcommand};
 use mosaic_core::{
     config::ClientConfig,
@@ -78,6 +79,8 @@ enum Command {
         guard: PathBuf,
         #[arg(long)]
         report: Option<PathBuf>,
+        #[arg(long)]
+        dedicated_host: bool,
     },
     #[command(about = "Remove an inactive launcher's recorded namespace and worker.")]
     IsolatedDown {
@@ -131,7 +134,20 @@ enum Command {
         #[arg(long, default_value_t = 50)]
         rate: u32,
         #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        max_mbps: Option<f64>,
+        #[arg(long)]
         report: Option<PathBuf>,
+    },
+    #[command(about = "Run a local SOCKS5 proxy that sends TCP connections through the relay.")]
+    Proxy {
+        #[arg(short, long)]
+        config: PathBuf,
+        #[arg(long, default_value = "127.0.0.1:1080")]
+        listen: std::net::SocketAddr,
+        #[arg(long)]
+        interface: Option<String>,
     },
     /// Run bounded outbound DNS/HTTPS checks; deployment gates remain separate.
     Preflight {
@@ -153,12 +169,14 @@ fn main() -> ExitCode {
             baseline,
             guard,
             report,
+            dedicated_host,
         } => netns_launcher::launch(netns_launcher::Options {
             config: &config,
             policy: &policy,
             baseline: &baseline,
             guard: &guard,
             output: report.as_deref(),
+            dedicated_host,
         }),
         Command::IsolatedDown { namespace, report } => {
             netns_launcher::cleanup(&namespace, report.as_deref())
@@ -189,6 +207,14 @@ fn main() -> ExitCode {
 }
 
 async fn run(command: Command) -> ExitCode {
+    if let Command::Proxy {
+        config,
+        listen,
+        interface,
+    } = command
+    {
+        return proxy::run(&config, listen, interface).await;
+    }
     if let Command::Fetch {
         config,
         url,
@@ -206,6 +232,8 @@ async fn run(command: Command) -> ExitCode {
         )
         .await;
     }
+    let mut cases: Vec<String> = Vec::new();
+    let mut max_mbps = None;
     let (config, schema_only, output, preflight, diagnostic) = match command {
         Command::CheckConfig {
             config,
@@ -220,16 +248,28 @@ async fn run(command: Command) -> ExitCode {
             count,
             size,
             rate,
-        } => (
-            config,
-            false,
-            report,
-            false,
-            Some((
-                case,
-                mosaic_core::quic::DatagramOptions { count, size, rate },
-            )),
-        ),
+            all,
+            max_mbps: limit,
+        } => {
+            cases = if all {
+                ["session", "stream-echo", "datagram-echo"]
+                    .map(String::from)
+                    .to_vec()
+            } else {
+                vec![case.clone()]
+            };
+            max_mbps = limit;
+            (
+                config,
+                false,
+                report,
+                false,
+                Some((
+                    case,
+                    mosaic_core::quic::DatagramOptions { count, size, rate },
+                )),
+            )
+        }
         Command::IsolatedUp { .. }
         | Command::IsolatedDown { .. }
         | Command::IsolatedExec { .. }
@@ -258,8 +298,10 @@ async fn run(command: Command) -> ExitCode {
                     Err(e) => report.add("config.credentials", Status::Fail, &e.to_string()),
                     Ok(()) => {
                         report.add("config.credentials", Status::Pass, "trust material and owner-only 32-byte token validated; server SAN is checked during TLS");
-                        if let Some((case, options)) = &diagnostic {
-                            diagnostic::run(&c, case, options, &mut report).await;
+                        if let Some((_, options)) = &diagnostic {
+                            for case in &cases {
+                                diagnostic::run(&c, case, options, max_mbps, &mut report).await;
+                            }
                         }
                         if preflight {
                             preflight::run(&c, &mut report).await;

@@ -1,7 +1,7 @@
 use crate::{
     frame,
     packet::{self, Address},
-    session,
+    transport::{PacketTransport, checked_size},
 };
 use anyhow::{Result, bail, ensure};
 use std::{
@@ -30,15 +30,21 @@ pub struct Counters {
     pub dropped: AtomicU64,
 }
 
+pub const MAX_RATE_MBPS: f64 = 10_000.0;
+
 pub struct Options {
     pub outbound: Address,
     pub inbound: Address,
     pub queue_packets: usize,
-    pub max_mbps: f64,
+    pub max_mbps: Option<f64>,
 }
 
-pub async fn run<T: PacketIo>(
-    connection: &quinn::Connection,
+pub fn valid_rate(max_mbps: f64) -> bool {
+    max_mbps.is_finite() && max_mbps > 0.0 && max_mbps <= MAX_RATE_MBPS
+}
+
+pub async fn run<T: PacketIo, C: PacketTransport>(
+    connection: &C,
     tun: &T,
     options: Options,
     counters: Arc<Counters>,
@@ -48,20 +54,22 @@ pub async fn run<T: PacketIo>(
         "invalid packet queue limit"
     );
     ensure!(
-        options.max_mbps.is_finite() && options.max_mbps > 0.0 && options.max_mbps <= 1.0,
+        options.max_mbps.is_none_or(valid_rate),
         "invalid tunnel rate limit"
     );
-    session::send_limit(connection)?;
+    checked_size(connection.max_packet_size())?;
     let (out_tx, mut out_rx) = mpsc::channel(options.queue_packets);
     let (in_tx, mut in_rx) = mpsc::channel(options.queue_packets);
     let schedule = Mutex::new(Instant::now());
     let schedule = &schedule;
     let pace = |size: usize| async move {
+        let Some(max_mbps) = options.max_mbps else {
+            return;
+        };
         let at = {
             let mut next = schedule.lock().await;
             let at = (*next).max(Instant::now());
-            *next =
-                at + Duration::from_secs_f64((size + 96) as f64 / (options.max_mbps * 50_000.0));
+            *next = at + Duration::from_secs_f64((size + 96) as f64 / (max_mbps * 125_000.0));
             at
         };
         tokio::time::sleep_until(at).await;
@@ -91,15 +99,14 @@ pub async fn run<T: PacketIo>(
     let send_packets = async {
         while let Some(bytes) = out_rx.recv().await {
             pace(bytes.len()).await;
-            session::send_limit(connection)?;
-            connection.send_datagram_wait(bytes.into()).await?;
+            connection.send_packet(bytes).await?;
             counters.sent.fetch_add(1, Ordering::Relaxed);
         }
         bail!("packet sender stopped")
     };
     let receive_packets = async {
         loop {
-            let bytes = connection.read_datagram().await?;
+            let bytes = connection.receive_packet().await?;
             let payload = match packet::decode(&bytes, options.inbound) {
                 Ok((_, payload)) => payload,
                 Err(_) => {
@@ -125,11 +132,8 @@ pub async fn run<T: PacketIo>(
         result = send_packets => result,
         result = receive_packets => result,
         result = write_tun => result,
-        stream = connection.accept_bi() => match stream {
-            Err(error) => Err(error.into()),
-            Ok(_) => Err(anyhow::anyhow!("streams are unavailable in tunnel mode")),
-        },
+        result = connection.stream_opened() => result,
     };
-    connection.close(1u32.into(), b"tunnel stopped");
+    connection.close(1, b"tunnel stopped");
     result
 }

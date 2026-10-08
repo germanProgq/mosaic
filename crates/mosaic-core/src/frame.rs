@@ -2,8 +2,10 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 pub const MAX_CONTROL_BYTES: usize = 4096;
-pub const MAX_QUEUE_PACKETS: usize = 256;
-pub const DATAGRAM_BUFFER_BYTES: usize = 256 * 1024;
+pub const MAX_QUEUE_PACKETS: usize = 2048;
+pub const DATAGRAM_BUFFER_BYTES: usize = 2 * 1024 * 1024;
+pub const DATAGRAM_SEND_BUFFER_BYTES: usize = 512 * 1024;
+pub const DIAGNOSTIC_QUEUE_PACKETS: usize = 256;
 pub const PACKET_HEADER_BYTES: usize = 12;
 pub const MTU: usize = 1100;
 pub const VERSION: u8 = 2;
