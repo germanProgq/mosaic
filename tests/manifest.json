@@ -219,7 +219,7 @@
     },
     "relay": {
       "status": "PASS",
-      "reason": "Compiled setup, owned forwarding, restart, kill recovery, uninstall, reinstall and upgrade passed live on 203.0.113.76. Tunnel egress, DNS, MTU, UDP, IPv6 blocking, three outages, kill cleanup and a 360-cycle soak passed from an isolated client on the same host, with Xray preserved (1440 samples)."
+      "reason": "Compiled setup, owned forwarding, restart, kill recovery, uninstall, reinstall and upgrade passed live on the dedicated relay host. Tunnel egress, DNS, MTU, UDP, IPv6 blocking, three outages, kill cleanup and a 360-cycle soak passed from an isolated client on the same host, with Xray preserved (1440 samples)."
     },
     "required_report_fields": [
       "source_revision",

@@ -57,3 +57,4 @@ node_modules/
 /native/android/local.properties
 
 /native/android/app/.cxx/
+/stop.txt
